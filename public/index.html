@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Squid Game: Phone Edition</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main class="player">
+    <div class="shapes">○ △ □</div>
+    <h1>Phone Edition</h1>
+
+    <section id="join-view">
+      <p class="muted">Enter the code on the big screen.</p>
+      <form id="join-form">
+        <input id="code" name="code" placeholder="ROOM CODE" maxlength="4" autocomplete="off" autocapitalize="characters" required>
+        <input id="name" name="name" placeholder="Your name" maxlength="16" autocomplete="off" required>
+        <button type="submit" id="join-btn">Join &amp; enable motion</button>
+      </form>
+      <p class="error" id="join-error"></p>
+    </section>
+
+    <section id="lobby-view" class="hidden">
+      <p>You're in, <strong id="me"></strong>.</p>
+      <p class="muted">Room <span id="room"></span> · Waiting for the host to start.</p>
+      <p class="muted">Move your phone — you should see this bar move.</p>
+      <div class="meter"><div id="my-meter"></div></div>
+      <p class="error" id="lobby-error"></p>
+    </section>
+  </main>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/player.js"></script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+{
+  "name": "hackpsu",
+  "version": "0.1.0",
+  "description": "Squid Game: Phone Edition — a motion-controlled party game for HackPSU Fall 2026",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "express": "^5.3.0",
+    "socket.io": "^4.8.4"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.8.4"
+  }
+}

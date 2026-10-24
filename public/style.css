@@ -1,0 +1,117 @@
+:root {
+  --bg: #0b0b0f;
+  --panel: #17171f;
+  --text: #f4f4f6;
+  --muted: #9a9aa8;
+  --pink: #ed1b76;
+  --teal: #249f9c;
+  --red: #ff3b3b;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.shapes { letter-spacing: 0.3em; color: var(--pink); font-size: 1.4rem; }
+
+h1 { margin: 0.2em 0; font-weight: 800; }
+
+.muted { color: var(--muted); }
+
+.error {
+  color: var(--red);
+  min-height: 1.2em;
+  margin: 0.5rem 0;
+}
+
+button {
+  font: inherit;
+  font-weight: 700;
+  border: 0;
+  border-radius: 12px;
+  padding: 0.9rem 1.2rem;
+  background: var(--pink);
+  color: white;
+  cursor: pointer;
+}
+
+button:disabled { opacity: 0.5; cursor: default; }
+
+input {
+  font: inherit;
+  width: 100%;
+  padding: 0.8rem;
+  border-radius: 10px;
+  border: 1px solid #333;
+  background: var(--panel);
+  color: var(--text);
+}
+
+.hidden { display: none !important; }
+
+/* Player page */
+.player {
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 24px 16px;
+  text-align: center;
+}
+
+.player form { display: grid; gap: 0.75rem; margin-top: 1.5rem; text-align: left; }
+.player form button { width: 100%; }
+#code { text-transform: uppercase; letter-spacing: 0.3em; }
+
+.meter {
+  height: 18px;
+  background: var(--panel);
+  border-radius: 9px;
+  overflow: hidden;
+  margin-top: 1rem;
+}
+
+.meter > div {
+  height: 100%;
+  width: 0;
+  background: var(--teal);
+  transition: width 80ms linear;
+}
+
+/* Host page */
+.host { padding: 32px; }
+
+.host header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.room-code {
+  font-size: clamp(3rem, 10vw, 7rem);
+  font-weight: 900;
+  letter-spacing: 0.15em;
+  color: var(--pink);
+  line-height: 1;
+}
+
+.players {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+  margin-top: 2rem;
+}
+
+.player-card {
+  background: var(--panel);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+
+.player-card .name { font-weight: 700; }

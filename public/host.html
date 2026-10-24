@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Host · Squid Game: Phone Edition</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main class="host">
+    <header>
+      <div>
+        <div class="shapes">○ △ □</div>
+        <h1>Phone Edition</h1>
+        <p class="muted">Join at <strong id="join-url"></strong></p>
+      </div>
+      <div>
+        <p class="muted">Room code</p>
+        <div class="room-code" id="room-code">····</div>
+      </div>
+    </header>
+
+    <p><strong id="count">0</strong> <span class="muted">players</span></p>
+    <p class="error" id="host-error"></p>
+    <section class="players" id="players"></section>
+  </main>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/host.js"></script>
+</body>
+</html>
