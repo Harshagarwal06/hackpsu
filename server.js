@@ -7,9 +7,10 @@ const {
 } = require('./src/rooms');
 const { RedLightRound } = require('./src/redLight');
 const { TugOfWarRound } = require('./src/tugOfWar');
+const { GlassBridgeRound } = require('./src/glassBridge');
 
-// roundOptions / tugOptions let tests run rounds with short timers.
-function createGameServer({ roundOptions, tugOptions } = {}) {
+// roundOptions / tugOptions / bridgeOptions let tests run rounds with short timers.
+function createGameServer({ roundOptions, tugOptions, bridgeOptions } = {}) {
   const app = express();
   app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
 
@@ -76,6 +77,35 @@ function createGameServer({ roundOptions, tugOptions } = {}) {
     round.start();
   }
 
+  function startGlassBridge(room) {
+    if (room.round) throw new RoomError('ROUND_RUNNING', 'A round is already running.');
+    if (room.players.size === 0) throw new RoomError('NO_PLAYERS', 'Wait for at least one player to join.');
+    const names = new Map([...room.players.values()].map((p) => [p.id, p.name]));
+    const round = new GlassBridgeRound({
+      players: names,
+      options: bridgeOptions,
+      on: {
+        start: (info) => io.to(room.code).emit('gb:start', info),
+        state: (info) => io.to(room.code).emit('gb:state', info),
+        jump: (info) => io.to(room.code).emit('gb:jump', info),
+        over: (summary) => {
+          room.round = null;
+          io.to(room.code).emit('gb:over', summary);
+        },
+      },
+    });
+    room.round = round;
+    round.start();
+  }
+
+  // The Glass Bridge round running in this player's room, or throws.
+  function bridgeRoundOf(playerId) {
+    const room = store.roomOf(playerId);
+    if (!room || !room.players.has(playerId)) throw new RoomError('NOT_IN_ROOM', 'Join a room first.');
+    if (!(room.round instanceof GlassBridgeRound)) throw new RoomError('NO_ROUND', 'Glass Bridge is not running.');
+    return { room, round: room.round };
+  }
+
   io.on('connection', (socket) => {
     socket.on('host:create', (ack) => {
       handle(socket, () => {
@@ -106,6 +136,32 @@ function createGameServer({ roundOptions, tugOptions } = {}) {
         startTugOfWar(store.hostedRoom(socket.id));
         return {};
       }, ack);
+    });
+
+    socket.on('host:start-bridge', (ack) => {
+      handle(socket, () => {
+        startGlassBridge(store.hostedRoom(socket.id));
+        return {};
+      }, ack);
+    });
+
+    socket.on('gb:choose', (side, ack) => {
+      handle(socket, () => {
+        const { round } = bridgeRoundOf(socket.id);
+        if (side !== 'left' && side !== 'right') throw new RoomError('BAD_SIDE', 'Pick left or right.');
+        if (!round.choose(socket.id, side)) throw new RoomError('NOT_YOUR_TURN', 'It is not your turn to jump.');
+        return {};
+      }, ack);
+    });
+
+    // Live tilt of the player on the bridge, shown on the big screen.
+    socket.on('gb:lean', (gamma) => {
+      handle(socket, () => {
+        const { room, round } = bridgeRoundOf(socket.id);
+        if (typeof gamma !== 'number' || !Number.isFinite(gamma)) throw new RoomError('BAD_TILT', 'Tilt must be a number.');
+        if (round.current === socket.id) io.to(room.hostId).volatile.emit('gb:lean', { id: socket.id, gamma });
+        return {};
+      });
     });
 
     socket.on('host:end-round', (ack) => {

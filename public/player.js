@@ -9,8 +9,11 @@ const $ = (id) => document.getElementById(id);
 let peakMotion = 0;
 let lastGravity = null;
 
-// iOS only lets a page read motion after the user taps something and agrees.
-// This must be called directly from the tap handler, before any await.
+// iOS only lets a page read motion and tilt after the user taps something and agrees.
+// This must be called directly from the tap handler: both permission requests
+// start before the first await so they both count as part of the tap.
+// Motion is required. Tilt (only used by Glass Bridge) is not: returns 'granted'
+// or a reason it isn't available, which the caller shows to the player.
 async function requestMotionPermission() {
   if (!window.isSecureContext) {
     throw new Error('Motion needs a secure (https://) link. Ask the host for the https link.');
@@ -18,13 +21,26 @@ async function requestMotionPermission() {
   if (typeof DeviceMotionEvent === 'undefined') {
     throw new Error('This browser has no motion sensor support.');
   }
-  if (typeof DeviceMotionEvent.requestPermission === 'function') {
-    const result = await DeviceMotionEvent.requestPermission();
-    if (result !== 'granted') {
-      throw new Error('Motion permission was denied. Reload the page and tap Allow.');
-    }
+  const motionAsk = typeof DeviceMotionEvent.requestPermission === 'function'
+    ? DeviceMotionEvent.requestPermission()
+    : Promise.resolve('granted');
+  let tiltAsk;
+  if (typeof DeviceOrientationEvent === 'undefined') {
+    tiltAsk = Promise.resolve('not supported by this browser');
+  } else if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+    tiltAsk = DeviceOrientationEvent.requestPermission().catch((err) => err.message);
+  } else {
+    tiltAsk = Promise.resolve('granted');
   }
+  const [motion, tilt] = await Promise.all([motionAsk, tiltAsk]);
+  if (motion !== 'granted') {
+    throw new Error('Motion permission was denied. Reload the page and tap Allow.');
+  }
+  return tilt;
 }
+
+// Left/right tilt in degrees (-90..90, negative = left), or null before the first reading.
+let gamma = null;
 
 // Movement strength for one sensor reading, in m/s².
 // Prefers acceleration without gravity; otherwise uses the change in the
@@ -46,11 +62,15 @@ function startStreamingMotion() {
   window.addEventListener('devicemotion', (event) => {
     peakMotion = Math.max(peakMotion, motionMagnitude(event));
   });
+  window.addEventListener('deviceorientation', (event) => {
+    if (event.gamma != null) gamma = event.gamma;
+  });
   setInterval(() => {
     const m = Math.round(peakMotion * 100) / 100;
     peakMotion = 0;
     socket.emit('player:motion', m);
     $('my-meter').style.width = `${Math.min(m / METER_MAX, 1) * 100}%`;
+    if (bridgeChoosing) bridgeTick();
   }, SEND_INTERVAL_MS);
 }
 
@@ -130,7 +150,10 @@ $('join-form').addEventListener('submit', async (e) => {
   try {
     unlockAudio();
     keepScreenOn();
-    await requestMotionPermission();
+    const tilt = await requestMotionPermission();
+    if (tilt !== 'granted') {
+      $('tilt-note').textContent = `Tilt isn't available (${tilt}), so you can't pick a side in Glass Bridge.`;
+    }
     const res = await joinRoom($('code').value, $('name').value);
     myId = res.id;
     $('me').textContent = res.name;
@@ -249,6 +272,112 @@ socket.on('tow:over', ({ results }) => {
     showScreen('eliminated', 'ELIMINATED', 'Your team lost the tug of war.');
     tone(900, 60, 1.5, 'sawtooth', 0.6);
     if (navigator.vibrate) navigator.vibrate([400, 100, 400]);
+  } else {
+    showScreen('finished', 'ROUND ENDED', 'Waiting for the next round.');
+  }
+});
+
+// --- Glass Bridge ------------------------------------------------------------
+const TILT_DEG = 20; // lean at least this far to pick a side
+const HOLD_MS = 1000; // hold the lean this long to jump
+
+let inBridge = false;
+let bridgeChoosing = false;
+let holdSide = null;
+let holdStart = 0;
+
+function setPads(side, fraction) {
+  for (const s of ['left', 'right']) {
+    $(`pad-${s}`).querySelector('.pad-fill').style.height = s === side ? `${fraction * 100}%` : '0%';
+  }
+}
+
+// Runs every sample while it's this player's turn: send the lean, and jump
+// once a side has been held long enough.
+function bridgeTick() {
+  if (gamma == null) return;
+  socket.emit('gb:lean', Math.round(gamma));
+  const side = gamma <= -TILT_DEG ? 'left' : gamma >= TILT_DEG ? 'right' : null;
+  const now = Date.now();
+  if (side !== holdSide) {
+    holdSide = side;
+    holdStart = now;
+  }
+  const held = side ? Math.min((now - holdStart) / HOLD_MS, 1) : 0;
+  setPads(side, held);
+  if (side && held >= 1) {
+    bridgeChoosing = false;
+    socket.emit('gb:choose', side, (res) => {
+      if (!res.ok) $('status-error').textContent = res.error.message;
+    });
+  }
+}
+
+function hideRoundWidgets() {
+  $('progress-meter').classList.add('hidden');
+  $('my-rope').classList.add('hidden');
+  $('jump-pads').classList.add('hidden');
+}
+
+socket.on('gb:start', ({ order }) => {
+  if (!myId || sittingOut || !order.some((p) => p.id === myId)) return;
+  inRound = true;
+  inBridge = true;
+  hideRoundWidgets();
+  showScreen('bridge', 'GLASS BRIDGE', 'Take turns crossing. Watch the big screen.');
+});
+
+socket.on('gb:state', ({ phase, current, position, steps, players: list }) => {
+  if (!inBridge) return;
+  const me = list.find((p) => p.id === myId);
+  if (!me) return;
+  if (me.status === 'waiting') {
+    const place = list.filter((p) => p.status === 'waiting').findIndex((p) => p.id === myId) + 1;
+    const hint = place === 1 ? "You're next! Get ready to tilt." : `You're #${place} in line. Watch the big screen.`;
+    showScreen('bridge', 'WAIT', hint);
+  } else if (me.status === 'onBridge' && current === myId && phase === 'choosing') {
+    if (!bridgeChoosing) {
+      // A new step: start the hold from scratch.
+      tone(440, 880, 0.25, 'sine');
+      holdSide = null;
+      setPads(null, 0);
+    }
+    bridgeChoosing = true;
+    $('jump-pads').classList.remove('hidden');
+    showScreen('bridge', 'YOUR TURN', `Step ${position + 1} of ${steps}. Tilt left or right and HOLD to jump.`);
+  } else {
+    bridgeChoosing = false;
+    $('jump-pads').classList.add('hidden');
+  }
+});
+
+socket.on('gb:jump', ({ id, side, correct, forced }) => {
+  if (!inBridge || id !== myId) return;
+  bridgeChoosing = false;
+  $('jump-pads').classList.add('hidden');
+  const how = forced ? `You froze and got pushed ${side}.` : `You jumped ${side}.`;
+  if (correct) {
+    showScreen('green', 'SAFE!', `${how} Tempered glass.`);
+    tone(523, 1046, 0.4, 'sine');
+  } else {
+    showScreen('eliminated', 'ELIMINATED', `${how} The glass shattered.`);
+    tone(1200, 40, 1.5, 'sawtooth', 0.6);
+    if (navigator.vibrate) navigator.vibrate([400, 100, 400]);
+  }
+});
+
+socket.on('gb:over', ({ results }) => {
+  if (!inBridge && !sittingOut) return;
+  inBridge = false;
+  bridgeChoosing = false;
+  const me = roundOver(results);
+  if (!me) return;
+  $('jump-pads').classList.add('hidden');
+  if (me.status === 'finished') {
+    showScreen('finished', 'YOU CROSSED', 'You made it across the bridge.');
+    tone(523, 1046, 0.5, 'sine');
+  } else if (me.status === 'eliminated') {
+    showScreen('eliminated', 'ELIMINATED', 'Waiting for the next round.');
   } else {
     showScreen('finished', 'ROUND ENDED', 'Waiting for the next round.');
   }

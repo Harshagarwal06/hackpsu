@@ -29,6 +29,7 @@
       <div class="buttons">
         <button id="start-btn" disabled>Start Red Light, Green Light</button>
         <button id="tug-btn" disabled>Start Tug of War</button>
+        <button id="bridge-btn" disabled>Start Glass Bridge</button>
         <button id="end-btn" class="secondary hidden">End round</button>
       </div>
     </section>
@@ -62,6 +63,22 @@
         <div class="rope"></div>
         <div class="knot" id="knot"></div>
       </div>
+    </section>
+
+    <section id="gb-view" class="gb hidden">
+      <div class="gb-head">
+        <div>
+          <div class="gb-big" id="gb-big"></div>
+          <div class="muted" id="gb-sub"></div>
+        </div>
+        <div class="gb-tilt">
+          <span>LEFT</span>
+          <div class="tilt-gauge"><div id="tilt-needle"></div></div>
+          <span>RIGHT</span>
+        </div>
+      </div>
+      <div class="bridge" id="bridge"></div>
+      <div class="muted gb-queue" id="gb-queue"></div>
     </section>
 
     <section id="results" class="results hidden"></section>

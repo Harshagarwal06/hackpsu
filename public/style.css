@@ -211,6 +211,47 @@ button.secondary { background: #333; }
   margin-bottom: 1rem;
 }
 
+/* Glass Bridge (host) */
+.gb { background: var(--panel); border-radius: 16px; padding: 20px; margin-bottom: 1rem; }
+.gb-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px; }
+.gb-big { font-size: clamp(1.8rem, 6vw, 4rem); font-weight: 900; line-height: 1.1; }
+.gb-tilt { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 0.85rem; }
+.tilt-gauge { position: relative; width: 180px; height: 14px; border-radius: 7px; background: #2a2a35; }
+.tilt-gauge::before,
+.tilt-gauge::after { content: ""; position: absolute; top: 0; bottom: 0; width: 2px; background: #555; }
+.tilt-gauge::before { left: 27.8%; } /* -20° */
+.tilt-gauge::after { left: 72.2%; } /* +20° */
+#tilt-needle {
+  position: absolute;
+  top: -5px;
+  left: 50%;
+  width: 6px;
+  height: 24px;
+  margin-left: -3px;
+  border-radius: 3px;
+  background: var(--pink);
+  transition: left 100ms linear;
+}
+
+.bridge { display: flex; gap: 6px; margin-top: 20px; overflow-x: auto; padding-bottom: 4px; }
+.bridge-step { display: grid; gap: 6px; flex: 1 0 44px; text-align: center; }
+.bridge-step.next .step-num { color: var(--pink); font-weight: 900; }
+.bridge-step.next .panel:not(.safe):not(.broken) { box-shadow: 0 0 0 2px var(--pink); }
+.panel {
+  height: 56px;
+  border-radius: 6px;
+  background: rgba(150, 200, 255, 0.18);
+  border: 1px solid rgba(150, 200, 255, 0.45);
+}
+.panel.safe { background: rgba(150, 200, 255, 0.55); border-color: #cfe6ff; }
+.panel.broken { background: transparent; border: 1px dashed #444; }
+.panel.jumped.ok { background: var(--teal); border-color: white; }
+.panel.jumped.crash { background: var(--red); border-color: var(--red); }
+.step-num { font-size: 0.8rem; color: var(--muted); }
+.bridge-step.row-labels { flex: 0 0 auto; grid-template-rows: 56px 56px; }
+.panel-label { display: grid; align-items: center; font-size: 0.75rem; font-weight: 700; color: var(--muted); }
+.gb-queue { margin-top: 12px; }
+
 /* Player page: full-screen color during the round */
 body[data-screen="green"] { background: #128a3e; }
 body[data-screen="red"] { background: #c8102e; }
@@ -218,6 +259,24 @@ body[data-screen="eliminated"] { background: #000; }
 body[data-screen="finished"] { background: #0d4f4d; }
 body[data-screen="pink"] { background: var(--pink); }
 body[data-screen="teal"] { background: var(--teal); }
+
+body[data-screen="bridge"] { background: #16213e; }
+
+/* Phone jump pads: fill up while you hold a tilt */
+.jump-pads { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 1.5rem; }
+.pad {
+  position: relative;
+  overflow: hidden;
+  height: 120px;
+  border-radius: 12px;
+  border: 2px solid rgba(150, 200, 255, 0.6);
+  background: rgba(150, 200, 255, 0.12);
+  display: grid;
+  place-items: center;
+  font-weight: 900;
+}
+.pad span { position: relative; }
+.pad-fill { position: absolute; left: 0; right: 0; bottom: 0; height: 0; background: rgba(150, 200, 255, 0.55); }
 
 /* Phone rope: where the knot is, from this player's point of view */
 .my-rope { position: relative; height: 24px; margin-top: 1rem; background: rgba(0, 0, 0, 0.3); border-radius: 12px; }

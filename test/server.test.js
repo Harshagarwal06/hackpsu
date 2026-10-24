@@ -136,6 +136,63 @@ test('Tug of War over sockets', async (t) => {
   assert.deepEqual(summary.results.map((r) => [r.name, r.status]).sort(), [['Ann', 'won'], ['Ben', 'eliminated']]);
 });
 
+test('Glass Bridge over sockets', async (t) => {
+  const { httpServer, io } = createGameServer({
+    bridgeOptions: { steps: 2, chooseMs: 5000, revealMs: 50 },
+  });
+  await new Promise((resolve) => httpServer.listen(0, resolve));
+  const url = `http://localhost:${httpServer.address().port}`;
+  const host = connect(url);
+  const p1 = connect(url);
+  const p2 = connect(url);
+  t.after(() => {
+    for (const s of [host, p1, p2]) s.close();
+    io.close();
+  });
+
+  const { code } = await emitWithAck(host, 'host:create');
+  await emitWithAck(p1, 'player:join', { code, name: 'Ann' });
+  await emitWithAck(p2, 'player:join', { code, name: 'Ben' });
+
+  const noRound = await emitWithAck(p1, 'gb:choose', 'left');
+  assert.equal(noRound.error.code, 'NO_ROUND');
+
+  const firstState = once(host, 'gb:state');
+  const { order } = await new Promise((resolve) => {
+    host.once('gb:start', resolve);
+    host.emit('host:start-bridge', () => {});
+  });
+  const state = await firstState;
+  const sockets = { Ann: p1, Ben: p2 };
+  const first = sockets[order[0].name];
+  const second = sockets[order[1].name];
+  assert.equal(state.current, order[0].id);
+
+  const wrongTurn = await emitWithAck(second, 'gb:choose', 'left');
+  assert.equal(wrongTurn.error.code, 'NOT_YOUR_TURN');
+  const badSide = await emitWithAck(first, 'gb:choose', 'up');
+  assert.equal(badSide.error.code, 'BAD_SIDE');
+
+  // The live lean of the player on the bridge reaches the host.
+  const lean = once(host, 'gb:lean');
+  first.emit('gb:lean', -30);
+  assert.deepEqual(await lean, { id: order[0].id, gamma: -30 });
+
+  // The first player jumps until they cross or fall, then the second player
+  // plays the rest; the round must end either way.
+  const done = once(host, 'gb:over');
+  host.on('gb:state', (s) => {
+    if (s.phase !== 'choosing') return;
+    const mover = s.current === order[0].id ? first : second;
+    mover.emit('gb:choose', 'left', () => {});
+  });
+  first.emit('gb:choose', 'left', () => {});
+  const summary = await done;
+  assert.ok(['crossed', 'done'].includes(summary.reason));
+  assert.equal(summary.results.length, 2);
+  assert.equal(summary.revealed.length > 0, true);
+});
+
 test('serves the player and host pages', async (t) => {
   const { httpServer, io } = createGameServer();
   await new Promise((resolve) => httpServer.listen(0, resolve));

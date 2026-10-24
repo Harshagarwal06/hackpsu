@@ -51,7 +51,7 @@ $('start-btn').addEventListener('click', () => {
     roundState.clear();
     for (const p of players) roundState.set(p.id, { status: 'playing', progress: 0 });
     $('results').classList.add('hidden');
-    $('tow-view').classList.add('hidden');
+    showRoundView(null);
     renderPlayers();
   });
 });
@@ -64,6 +64,19 @@ $('tug-btn').addEventListener('click', () => {
   });
 });
 
+$('bridge-btn').addEventListener('click', () => {
+  showError(null);
+  socket.emit('host:start-bridge', (res) => {
+    if (!res.ok) return showError(res.error);
+    $('results').classList.add('hidden');
+  });
+});
+
+// Shows one round's big-screen view (or none) and hides the others.
+function showRoundView(id) {
+  for (const view of ['tow-view', 'gb-view']) $(view).classList.toggle('hidden', view !== id);
+}
+
 $('end-btn').addEventListener('click', () => {
   socket.emit('host:end-round', (res) => showError(res.ok ? null : res.error));
 });
@@ -72,10 +85,18 @@ function updateButtons() {
   const noRoom = $('room-code').textContent.includes('·');
   $('start-btn').disabled = roundRunning || players.length === 0 || noRoom;
   $('tug-btn').disabled = roundRunning || players.length < 2 || noRoom;
+  $('bridge-btn').disabled = roundRunning || players.length === 0 || noRoom;
   $('end-btn').classList.toggle('hidden', !roundRunning);
 }
 
-const STATUS_LABEL = { playing: '', finished: '✓ Crossed', won: '✓ Won', eliminated: '✕ Eliminated' };
+const STATUS_LABEL = {
+  playing: '',
+  waiting: '',
+  onBridge: '▶ On the bridge',
+  finished: '✓ Crossed',
+  won: '✓ Won',
+  eliminated: '✕ Eliminated',
+};
 
 function renderPlayers() {
   $('count').textContent = players.length;
@@ -191,7 +212,7 @@ socket.on('tow:start', ({ teams }) => {
   $('tow-big').textContent = 'GET READY';
   $('tow-timer').textContent = '';
   $('knot').style.left = '50%';
-  $('tow-view').classList.remove('hidden');
+  showRoundView('tow-view');
 });
 
 socket.on('tow:state', ({ phase, rope, force, msLeft }) => {
@@ -221,6 +242,121 @@ socket.on('tow:over', ({ reason, winner, results }) => {
   }[reason];
   showResults(heading, [
     ['Won', namesWith(results, 'won')],
+    ['Still in', namesWith(results, 'playing')],
+    ['Eliminated', namesWith(results, 'eliminated')],
+  ]);
+});
+
+// --- Glass Bridge ------------------------------------------------------------
+
+let gbState = null; // last gb:state
+let gbLastJump = null; // last gb:jump, highlighted on the bridge
+let gbDeadline = 0;
+let gbCountdown = null;
+
+const nameOf = (id) => gbState?.players.find((p) => p.id === id)?.name || players.find((p) => p.id === id)?.name || '';
+
+function renderBridge() {
+  const { steps, revealed, position, current } = gbState;
+  const bridge = $('bridge');
+  bridge.replaceChildren();
+  const labels = document.createElement('div');
+  labels.className = 'bridge-step row-labels';
+  labels.innerHTML = '<div class="panel-label">LEFT</div><div class="panel-label">RIGHT</div>';
+  bridge.append(labels);
+  for (let i = 0; i < steps; i++) {
+    const col = document.createElement('div');
+    col.className = 'bridge-step';
+    if (current && i === position) col.classList.add('next');
+    for (const side of ['left', 'right']) {
+      const panel = document.createElement('div');
+      panel.className = 'panel';
+      if (i < revealed.length) panel.classList.add(revealed[i] === side ? 'safe' : 'broken');
+      if (gbLastJump && gbLastJump.step === i && gbLastJump.side === side) {
+        panel.classList.add('jumped', gbLastJump.correct ? 'ok' : 'crash');
+      }
+      col.append(panel);
+    }
+    const label = document.createElement('div');
+    label.className = 'step-num';
+    label.textContent = i + 1;
+    col.append(label);
+    bridge.append(col);
+  }
+}
+
+function setNeedle(gamma) {
+  const clamped = Math.max(-45, Math.min(45, gamma));
+  $('tilt-needle').style.left = `${50 + (clamped / 45) * 50}%`;
+}
+
+function updateCountdown() {
+  if (!gbState || gbState.phase !== 'choosing') return;
+  const secs = Math.max(0, Math.ceil((gbDeadline - Date.now()) / 1000));
+  $('gb-sub').textContent = `Step ${gbState.position + 1} of ${gbState.steps} · ${secs}s to jump`;
+}
+
+socket.on('gb:start', ({ order }) => {
+  roundRunning = true;
+  updateButtons();
+  roundState.clear();
+  for (const p of order) roundState.set(p.id, { status: 'waiting' });
+  renderPlayers();
+  gbLastJump = null;
+  $('gb-big').textContent = 'GLASS BRIDGE';
+  $('gb-sub').textContent = '';
+  setNeedle(0);
+  showRoundView('gb-view');
+  clearInterval(gbCountdown);
+  gbCountdown = setInterval(updateCountdown, 250);
+});
+
+socket.on('gb:state', (state) => {
+  const previousCurrent = gbState?.current;
+  gbState = state;
+  for (const p of state.players) {
+    roundState.set(p.id, { status: p.status });
+    applyRoundState(p.id);
+  }
+  if (state.phase === 'choosing') {
+    gbDeadline = Date.now() + state.msLeft;
+    $('gb-big').textContent = `${nameOf(state.current).toUpperCase()}'S TURN`;
+    if (state.current !== previousCurrent) setNeedle(0);
+    updateCountdown();
+  }
+  const waiting = state.players.filter((p) => p.status === 'waiting').map((p) => p.name);
+  $('gb-queue').textContent = waiting.length ? `Next up: ${waiting.join(', ')}` : '';
+  renderBridge();
+});
+
+socket.on('gb:lean', ({ id, gamma }) => {
+  if (gbState && id === gbState.current) setNeedle(gamma);
+});
+
+socket.on('gb:jump', (jump) => {
+  gbLastJump = jump;
+  $('gb-big').textContent = jump.correct ? 'SAFE!' : 'CRASH!';
+  const how = jump.forced ? `${jump.name} froze and was pushed ${jump.side}` : `${jump.name} jumped ${jump.side}`;
+  $('gb-sub').textContent = jump.correct ? `${how}. Tempered glass!` : `${how}. The glass shattered.`;
+});
+
+socket.on('gb:over', ({ reason, results }) => {
+  roundRunning = false;
+  updateButtons();
+  clearInterval(gbCountdown);
+  for (const r of results) {
+    roundState.set(r.id, { status: r.status });
+    applyRoundState(r.id);
+  }
+  if (gbState) {
+    gbState = { ...gbState, current: null };
+    renderBridge();
+  }
+  const survivors = namesWith(results, 'finished');
+  $('gb-big').textContent = reason === 'host' ? 'ROUND ENDED' : survivors.length ? 'BRIDGE CROSSED' : 'NOBODY MADE IT';
+  $('gb-queue').textContent = '';
+  showResults(reason === 'host' ? 'Round ended by host' : 'Glass Bridge over', [
+    ['Crossed', survivors],
     ['Still in', namesWith(results, 'playing')],
     ['Eliminated', namesWith(results, 'eliminated')],
   ]);
