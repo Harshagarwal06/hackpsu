@@ -8,6 +8,7 @@ const {
 const { RedLightRound } = require('./src/redLight');
 const { TugOfWarRound } = require('./src/tugOfWar');
 const { GlassBridgeRound } = require('./src/glassBridge');
+const { Game } = require('./src/game');
 
 // roundOptions / tugOptions / bridgeOptions let tests run rounds with short timers.
 function createGameServer({ roundOptions, tugOptions, bridgeOptions } = {}) {
@@ -35,21 +36,29 @@ function createGameServer({ roundOptions, tugOptions, bridgeOptions } = {}) {
     }
   }
 
-  function startRedLight(room) {
-    if (room.round) throw new RoomError('ROUND_RUNNING', 'A round is already running.');
-    if (room.players.size === 0) throw new RoomError('NO_PLAYERS', 'Wait for at least one player to join.');
-    const names = new Map([...room.players.values()].map((p) => [p.id, p.name]));
+  // Map of id -> name for everyone in the room.
+  function allPlayers(room) {
+    return new Map([...room.players.values()].map((p) => [p.id, p.name]));
+  }
+
+  // Each round starter takes the players who take part, and an optional
+  // callback that runs after the round's results have been sent.
+
+  function startRedLight(room, names, afterOver) {
+    if (names.size === 0) throw new RoomError('NO_PLAYERS', 'Wait for at least one player to join.');
     const round = new RedLightRound({
       players: names,
       getThreshold: () => room.threshold,
       options: roundOptions,
       on: {
+        start: (info) => io.to(room.code).emit('rl:start', info),
         phase: (info) => io.to(room.code).emit('rl:phase', info),
         // Progress updates go only to the host and that player, not every phone.
         player: (id, state) => io.to([room.hostId, id]).emit('rl:player', { id, ...state }),
         over: (summary) => {
           room.round = null;
           io.to(room.code).emit('rl:over', summary);
+          afterOver?.(summary);
         },
       },
     });
@@ -57,10 +66,8 @@ function createGameServer({ roundOptions, tugOptions, bridgeOptions } = {}) {
     round.start();
   }
 
-  function startTugOfWar(room) {
-    if (room.round) throw new RoomError('ROUND_RUNNING', 'A round is already running.');
-    if (room.players.size < 2) throw new RoomError('NOT_ENOUGH_PLAYERS', 'Tug of War needs at least 2 players.');
-    const names = new Map([...room.players.values()].map((p) => [p.id, p.name]));
+  function startTugOfWar(room, names, afterOver) {
+    if (names.size < 2) throw new RoomError('NOT_ENOUGH_PLAYERS', 'Tug of War needs at least 2 players.');
     const round = new TugOfWarRound({
       players: names,
       options: tugOptions,
@@ -70,6 +77,7 @@ function createGameServer({ roundOptions, tugOptions, bridgeOptions } = {}) {
         over: (summary) => {
           room.round = null;
           io.to(room.code).emit('tow:over', summary);
+          afterOver?.(summary);
         },
       },
     });
@@ -77,10 +85,8 @@ function createGameServer({ roundOptions, tugOptions, bridgeOptions } = {}) {
     round.start();
   }
 
-  function startGlassBridge(room) {
-    if (room.round) throw new RoomError('ROUND_RUNNING', 'A round is already running.');
-    if (room.players.size === 0) throw new RoomError('NO_PLAYERS', 'Wait for at least one player to join.');
-    const names = new Map([...room.players.values()].map((p) => [p.id, p.name]));
+  function startGlassBridge(room, names, afterOver) {
+    if (names.size === 0) throw new RoomError('NO_PLAYERS', 'Wait for at least one player to join.');
     const round = new GlassBridgeRound({
       players: names,
       options: bridgeOptions,
@@ -91,11 +97,36 @@ function createGameServer({ roundOptions, tugOptions, bridgeOptions } = {}) {
         over: (summary) => {
           room.round = null;
           io.to(room.code).emit('gb:over', summary);
+          afterOver?.(summary);
         },
       },
     });
     room.round = round;
     round.start();
+  }
+
+  const STARTERS = { redlight: startRedLight, tug: startTugOfWar, bridge: startGlassBridge };
+
+  // Practice rounds: everyone plays and nothing carries over.
+  function startPractice(room, key) {
+    if (room.round) throw new RoomError('ROUND_RUNNING', 'A round is already running.');
+    if (room.game?.isActive()) throw new RoomError('GAME_RUNNING', 'Finish or end the game first.');
+    STARTERS[key](room, allPlayers(room));
+  }
+
+  function emitGame(room) {
+    io.to(room.code).emit('game:state', room.game ? room.game.state() : null);
+  }
+
+  // Starts the game's next round with only the players still in.
+  function startGameRound(room) {
+    if (room.round) throw new RoomError('ROUND_RUNNING', 'A round is already running.');
+    const { key, players } = room.game.nextRound();
+    emitGame(room);
+    STARTERS[key](room, players, (summary) => {
+      room.game.roundOver(summary.results);
+      emitGame(room);
+    });
   }
 
   // The Glass Bridge round running in this player's room, or throws.
@@ -126,21 +157,53 @@ function createGameServer({ roundOptions, tugOptions, bridgeOptions } = {}) {
 
     socket.on('host:start-redlight', (ack) => {
       handle(socket, () => {
-        startRedLight(store.hostedRoom(socket.id));
+        startPractice(store.hostedRoom(socket.id), 'redlight');
         return {};
       }, ack);
     });
 
     socket.on('host:start-tug', (ack) => {
       handle(socket, () => {
-        startTugOfWar(store.hostedRoom(socket.id));
+        startPractice(store.hostedRoom(socket.id), 'tug');
         return {};
       }, ack);
     });
 
     socket.on('host:start-bridge', (ack) => {
       handle(socket, () => {
-        startGlassBridge(store.hostedRoom(socket.id));
+        startPractice(store.hostedRoom(socket.id), 'bridge');
+        return {};
+      }, ack);
+    });
+
+    socket.on('host:game-start', (ack) => {
+      handle(socket, () => {
+        const room = store.hostedRoom(socket.id);
+        if (room.round) throw new RoomError('ROUND_RUNNING', 'A round is already running.');
+        if (room.game?.isActive()) throw new RoomError('GAME_RUNNING', 'A game is already running.');
+        if (room.players.size < 2) throw new RoomError('NOT_ENOUGH_PLAYERS', 'A game needs at least 2 players.');
+        room.game = new Game(allPlayers(room));
+        startGameRound(room);
+        return {};
+      }, ack);
+    });
+
+    socket.on('host:game-next', (ack) => {
+      handle(socket, () => {
+        const room = store.hostedRoom(socket.id);
+        if (room.game?.phase !== 'intermission') throw new RoomError('NO_NEXT_ROUND', 'There is no next round to start.');
+        startGameRound(room);
+        return {};
+      }, ack);
+    });
+
+    socket.on('host:game-end', (ack) => {
+      handle(socket, () => {
+        const room = store.hostedRoom(socket.id);
+        if (!room.game) throw new RoomError('NO_GAME', 'No game is running.');
+        if (room.round) throw new RoomError('ROUND_RUNNING', 'End the current round first.');
+        room.game = null;
+        emitGame(room);
         return {};
       }, ack);
     });
@@ -178,7 +241,13 @@ function createGameServer({ roundOptions, tugOptions, bridgeOptions } = {}) {
         const { room, player } = store.joinRoom(payload?.code, socket.id, payload?.name);
         socket.join(room.code);
         io.to(room.hostId).emit('room:players', publicPlayers(room));
-        return { id: socket.id, code: room.code, name: player.name, roundRunning: Boolean(room.round) };
+        return {
+          id: socket.id,
+          code: room.code,
+          name: player.name,
+          roundRunning: Boolean(room.round),
+          game: room.game ? room.game.state() : null,
+        };
       }, ack);
     });
 
@@ -200,6 +269,10 @@ function createGameServer({ roundOptions, tugOptions, bridgeOptions } = {}) {
         io.to(left.room.code).emit('room:closed');
       } else {
         if (left.room.round) left.room.round.removePlayer(socket.id);
+        if (left.room.game) {
+          left.room.game.removePlayer(socket.id);
+          emitGame(left.room);
+        }
         io.to(left.room.hostId).emit('room:players', publicPlayers(left.room));
       }
     });

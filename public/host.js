@@ -44,37 +44,24 @@ $('threshold').addEventListener('input', (e) => {
   socket.emit('host:threshold', value, (res) => showError(res.ok ? null : res.error));
 });
 
-$('start-btn').addEventListener('click', () => {
+// Sends a host command; shows its error if it fails.
+function command(event) {
   showError(null);
-  socket.emit('host:start-redlight', (res) => {
-    if (!res.ok) return showError(res.error);
-    roundState.clear();
-    for (const p of players) roundState.set(p.id, { status: 'playing', progress: 0 });
-    $('results').classList.add('hidden');
-    showRoundView(null);
-    renderPlayers();
-  });
-});
+  socket.emit(event, (res) => showError(res.ok ? null : res.error));
+}
 
-$('tug-btn').addEventListener('click', () => {
-  showError(null);
-  socket.emit('host:start-tug', (res) => {
-    if (!res.ok) return showError(res.error);
-    $('results').classList.add('hidden');
-  });
-});
+$('start-btn').addEventListener('click', () => command('host:start-redlight'));
+$('tug-btn').addEventListener('click', () => command('host:start-tug'));
+$('bridge-btn').addEventListener('click', () => command('host:start-bridge'));
+$('game-btn').addEventListener('click', () => command('host:game-start'));
+$('next-btn').addEventListener('click', () => command('host:game-next'));
+$('endgame-btn').addEventListener('click', () => command('host:game-end'));
 
-$('bridge-btn').addEventListener('click', () => {
-  showError(null);
-  socket.emit('host:start-bridge', (res) => {
-    if (!res.ok) return showError(res.error);
-    $('results').classList.add('hidden');
-  });
-});
-
-// Shows one round's big-screen view (or none) and hides the others.
+// Shows one round's big-screen view (or none), hiding the others and the
+// previous round's results.
 function showRoundView(id) {
   for (const view of ['tow-view', 'gb-view']) $(view).classList.toggle('hidden', view !== id);
+  $('results').classList.add('hidden');
 }
 
 $('end-btn').addEventListener('click', () => {
@@ -83,11 +70,58 @@ $('end-btn').addEventListener('click', () => {
 
 function updateButtons() {
   const noRoom = $('room-code').textContent.includes('·');
-  $('start-btn').disabled = roundRunning || players.length === 0 || noRoom;
-  $('tug-btn').disabled = roundRunning || players.length < 2 || noRoom;
-  $('bridge-btn').disabled = roundRunning || players.length === 0 || noRoom;
+  const gameActive = Boolean(game && game.phase !== 'over');
+  const busy = roundRunning || gameActive || noRoom;
+  $('start-btn').disabled = busy || players.length === 0;
+  $('tug-btn').disabled = busy || players.length < 2;
+  $('bridge-btn').disabled = busy || players.length === 0;
+  $('game-btn').disabled = busy || players.length < 2;
+  $('game-btn').textContent = game?.phase === 'over' ? 'New Game' : 'Start Game';
+  $('game-btn').classList.toggle('hidden', gameActive);
+  const canNext = game?.phase === 'intermission' && !roundRunning;
+  $('next-btn').classList.toggle('hidden', !canNext);
+  if (canNext) $('next-btn').textContent = `Next round: ${game.next}`;
   $('end-btn').classList.toggle('hidden', !roundRunning);
+  $('endgame-btn').classList.toggle('hidden', !game || roundRunning);
 }
+
+// --- Game (rounds in a row, survivors carry over) ----------------------------
+
+let game = null; // last game:state, or null when there is no game
+let gameOut = new Map(); // id -> round they went out in
+let gameWinners = new Set();
+
+socket.on('game:state', (state) => {
+  game = state;
+  gameOut = new Map((state?.out || []).map((o) => [o.id, o.round]));
+  gameWinners = new Set((state?.winners || []).map((w) => w.id));
+  $('game-view').classList.toggle('hidden', !state);
+  $('winner-view').classList.toggle('hidden', state?.phase !== 'over');
+  if (state) {
+    const total = state.rounds.length;
+    const status = {
+      playing: `Round ${state.stage + 1} of ${total}: ${state.current}`,
+      intermission: `Round ${state.stage} of ${total} done · Up next: ${state.next}`,
+      over: 'Game over',
+    }[state.phase];
+    $('game-status').textContent = status;
+    $('game-note').textContent = state.note;
+    $('game-alive').textContent = `Still in (${state.alive.length}): ${state.alive.map((p) => p.name).join(', ') || 'nobody'}`;
+    $('game-out').textContent = state.out.length
+      ? `Out: ${state.out.map((o) => `${o.name} (${o.round})`).join(', ')}`
+      : '';
+    if (state.phase === 'over') {
+      const names = state.winners.map((w) => w.name);
+      $('winner-label').textContent = names.length > 1 ? 'WINNERS' : names.length ? 'WINNER' : 'NO WINNER';
+      $('winner-names').textContent = names.join(' · ');
+      showRoundView(null);
+      $('results').classList.add('hidden');
+    }
+    if (state.phase === 'playing') $('results').classList.add('hidden');
+  }
+  for (const id of cards.keys()) applyRoundState(id);
+  updateButtons();
+});
 
 const STATUS_LABEL = {
   playing: '',
@@ -129,10 +163,19 @@ function applyRoundState(id) {
   const c = cards.get(id);
   if (!c) return;
   const state = roundState.get(id);
-  const status = state ? state.status : 'playing';
+  let status = state ? state.status : 'playing';
+  let label = STATUS_LABEL[status];
+  // The game's verdict wins over a single round's.
+  if (gameWinners.has(id)) {
+    status = 'won';
+    label = '👑 Winner';
+  } else if (gameOut.has(id) && (!state || state.status === 'eliminated')) {
+    status = 'eliminated';
+    label = `✕ Out · ${gameOut.get(id)}`;
+  }
   c.card.dataset.status = status;
   c.card.dataset.team = state?.team || '';
-  c.status.textContent = STATUS_LABEL[status];
+  c.status.textContent = label;
   // Only Red Light has a progress bar.
   const hasProgress = state?.progress !== undefined;
   c.progress.parentElement.classList.toggle('hidden', !hasProgress);
@@ -164,6 +207,15 @@ socket.on('room:players', (list) => {
 socket.on('player:motion', ({ id, m }) => {
   const c = cards.get(id);
   if (c) c.motion.style.width = `${Math.min(m / METER_MAX, 1) * 100}%`;
+});
+
+socket.on('rl:start', ({ players: inRound }) => {
+  roundRunning = true;
+  roundState.clear();
+  for (const p of inRound) roundState.set(p.id, { status: 'playing', progress: 0 });
+  $('results').classList.add('hidden');
+  showRoundView(null);
+  renderPlayers();
 });
 
 socket.on('rl:phase', ({ phase, cycle, cycles }) => {

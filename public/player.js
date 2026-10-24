@@ -132,8 +132,7 @@ document.addEventListener('visibilitychange', () => {
 // --- Screens ---------------------------------------------------------------
 let myId = null;
 let myStatus = 'playing';
-let inRound = false;
-let sittingOut = false; // joined while a round was already running
+let inRound = false; // true while this player is taking part in a round
 
 function showScreen(screen, word, hint) {
   document.body.dataset.screen = screen;
@@ -159,12 +158,12 @@ $('join-form').addEventListener('submit', async (e) => {
     $('me').textContent = res.name;
     $('room').textContent = res.code;
     if (res.roundRunning) {
-      sittingOut = true;
       $('lobby-status').textContent = 'A round is in progress. You will play the next one.';
     }
     $('join-view').classList.add('hidden');
     $('motion-meter').classList.remove('hidden');
     showScreen('lobby');
+    if (res.game) applyGame(res.game);
     startStreamingMotion();
   } catch (err) {
     $('join-error').textContent = err.message;
@@ -172,17 +171,17 @@ $('join-form').addEventListener('submit', async (e) => {
   }
 });
 
+socket.on('rl:start', ({ players: list }) => {
+  if (!myId || !list.some((p) => p.id === myId)) return;
+  inRound = true;
+  myStatus = 'playing';
+  hideRoundWidgets();
+  $('my-progress').style.width = '0%';
+  $('progress-meter').classList.remove('hidden');
+});
+
 socket.on('rl:phase', ({ phase }) => {
-  if (!myId || sittingOut) return;
-  if (!inRound) {
-    // First light of a new round.
-    inRound = true;
-    myStatus = 'playing';
-    $('my-progress').style.width = '0%';
-    $('progress-meter').classList.remove('hidden');
-    $('my-rope').classList.add('hidden');
-  }
-  if (myStatus !== 'playing') return;
+  if (!inRound || myStatus !== 'playing') return;
   if (phase === 'green') {
     showScreen('green', 'GREEN LIGHT', 'Move! Fill your bar to cross the line.');
     tone(440, 660, 0.2, 'sine');
@@ -211,10 +210,10 @@ socket.on('rl:player', ({ id, status, progress }) => {
 // weren't in the round.
 function roundOver(results) {
   if (!myId) return null;
+  const wasIn = inRound;
   inRound = false;
-  if (sittingOut) {
-    // Joined mid-round: they play the next one.
-    sittingOut = false;
+  if (!wasIn) {
+    // Joined mid-round or sat it out: they can play the next one.
     $('lobby-status').textContent = 'Waiting for the host to start the next round.';
     return null;
   }
@@ -233,13 +232,12 @@ let myTeam = null;
 let towPhase = null;
 
 socket.on('tow:start', ({ teams }) => {
-  if (!myId || sittingOut) return;
-  const mine = teams.find((t) => t.id === myId);
+  const mine = myId && teams.find((t) => t.id === myId);
   if (!mine) return;
   inRound = true;
   myTeam = mine.team;
   towPhase = 'countdown';
-  $('progress-meter').classList.add('hidden');
+  hideRoundWidgets();
   $('my-rope').classList.remove('hidden');
   $('my-knot').style.left = '50%';
   showScreen(myTeam, 'GET READY', `You're on Team ${myTeam.toUpperCase()}. Shake when it says SHAKE!`);
@@ -320,7 +318,7 @@ function hideRoundWidgets() {
 }
 
 socket.on('gb:start', ({ order }) => {
-  if (!myId || sittingOut || !order.some((p) => p.id === myId)) return;
+  if (!myId || !order.some((p) => p.id === myId)) return;
   inRound = true;
   inBridge = true;
   hideRoundWidgets();
@@ -367,7 +365,6 @@ socket.on('gb:jump', ({ id, side, correct, forced }) => {
 });
 
 socket.on('gb:over', ({ results }) => {
-  if (!inBridge && !sittingOut) return;
   inBridge = false;
   bridgeChoosing = false;
   const me = roundOver(results);
@@ -382,6 +379,47 @@ socket.on('gb:over', ({ results }) => {
     showScreen('finished', 'ROUND ENDED', 'Waiting for the next round.');
   }
 });
+
+// --- Game (rounds in a row) ------------------------------------------------
+// The game decides what this phone shows between rounds. During a round the
+// round's own events drive the screen, so 'playing' only matters for players
+// who are out or joined late.
+function applyGame(game) {
+  if (!myId) return;
+  if (!game) {
+    if (!inRound) {
+      showScreen('lobby');
+      $('lobby-status').textContent = 'Waiting for the host to start.';
+    }
+    return;
+  }
+  const alive = game.alive.some((p) => p.id === myId);
+  const out = game.out.find((o) => o.id === myId);
+  if (game.phase === 'over') {
+    if (game.winners.some((w) => w.id === myId)) {
+      const others = game.winners.filter((w) => w.id !== myId).map((w) => w.name);
+      const hint = others.length ? `You share the win with ${others.join(', ')}.` : 'Last one standing. Take a bow.';
+      showScreen('winner', 'YOU WON', hint);
+      tone(523, 1046, 0.3, 'sine');
+      setTimeout(() => tone(659, 1318, 0.3, 'sine'), 300);
+      setTimeout(() => tone(784, 1568, 0.6, 'sine'), 600);
+    } else if (alive || out) {
+      const names = game.winners.map((w) => w.name).join(', ') || 'nobody';
+      showScreen('eliminated', 'GAME OVER', `Winner: ${names}`);
+    }
+  } else if (out) {
+    if (!inRound) showScreen('eliminated', "YOU'RE OUT", `Out in ${out.round}. Watch the big screen.`);
+  } else if (alive) {
+    if (game.phase === 'intermission') {
+      showScreen('finished', "YOU'RE STILL IN", `Next: ${game.next}. Get ready!`);
+    }
+  } else {
+    // Joined after the game started.
+    $('lobby-status').textContent = 'A game is in progress. You can play the next one.';
+  }
+}
+
+socket.on('game:state', applyGame);
 
 socket.on('room:closed', () => {
   $('status-error').textContent = 'The host closed the room. Reload to join a new one.';

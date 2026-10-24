@@ -18,7 +18,7 @@ const DEFAULT_OPTIONS = {
 class RedLightRound {
   // players: Map of id -> name
   // getThreshold: () => current sensitivity threshold (the host can change it mid-round)
-  // on: { phase(info), player(id, state), over(results) }
+  // on: { start(info), phase(info), player(id, state), over(results) }
   constructor({ players, getThreshold, on, random = Math.random, options = {} }) {
     this.opts = { ...DEFAULT_OPTIONS, ...options };
     this.getThreshold = getThreshold;
@@ -36,6 +36,7 @@ class RedLightRound {
 
   start() {
     if (this.phase !== 'idle') throw new Error('Round already started.');
+    this.on.start({ players: [...this.players.values()].map(({ id, name }) => ({ id, name })) });
     this.toGreen();
   }
 

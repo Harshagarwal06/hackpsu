@@ -22,6 +22,7 @@ function setup(t, { threshold = 1, players = [['a', 'Ann'], ['b', 'Ben']], optio
     random: () => 0,
     options: { ...OPTIONS, ...options },
     on: {
+      start: () => {},
       phase: (info) => events.push(['phase', info.phase, info.cycle]),
       player: (id, state) => events.push(['player', id, state.status, state.progress]),
       over: (summary) => events.push(['over', summary]),
@@ -147,7 +148,7 @@ test('the threshold is read live, so the host can change it mid-round', (t) => {
     getThreshold: () => threshold,
     random: () => 0,
     options: OPTIONS,
-    on: { phase() {}, player: (id, s) => events.push(s.status), over() {} },
+    on: { start() {}, phase() {}, player: (id, s) => events.push(s.status), over() {} },
   });
   round.start();
   round.handleMotion('a', 5);

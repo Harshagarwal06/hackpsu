@@ -26,12 +26,33 @@
         <input type="range" id="threshold" step="0.1" disabled>
         <span class="muted">Lower = stricter. Movement past the white line on a player's bar counts.</span>
       </label>
-      <div class="buttons">
-        <button id="start-btn" disabled>Start Red Light, Green Light</button>
-        <button id="tug-btn" disabled>Start Tug of War</button>
-        <button id="bridge-btn" disabled>Start Glass Bridge</button>
-        <button id="end-btn" class="secondary hidden">End round</button>
+      <div class="button-groups">
+        <div class="buttons">
+          <button id="game-btn" class="big" disabled>Start Game</button>
+          <button id="next-btn" class="big hidden"></button>
+          <button id="end-btn" class="secondary hidden">End round</button>
+          <button id="endgame-btn" class="secondary hidden">End game</button>
+        </div>
+        <div class="buttons practice">
+          <span class="muted">Practice (everyone plays, nothing counts):</span>
+          <button id="start-btn" class="secondary" disabled>Red Light, Green Light</button>
+          <button id="tug-btn" class="secondary" disabled>Tug of War</button>
+          <button id="bridge-btn" class="secondary" disabled>Glass Bridge</button>
+        </div>
       </div>
+    </section>
+
+    <section id="game-view" class="game-panel hidden">
+      <div class="game-status" id="game-status"></div>
+      <p class="game-note" id="game-note"></p>
+      <p id="game-alive"></p>
+      <p class="muted" id="game-out"></p>
+    </section>
+
+    <section id="winner-view" class="winner hidden">
+      <div class="shapes">○ △ □</div>
+      <div class="winner-label" id="winner-label">WINNER</div>
+      <div class="winner-names" id="winner-names"></div>
     </section>
 
     <section id="phase-banner" class="phase-banner hidden">

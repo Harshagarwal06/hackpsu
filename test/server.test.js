@@ -193,6 +193,59 @@ test('Glass Bridge over sockets', async (t) => {
   assert.equal(summary.revealed.length > 0, true);
 });
 
+test('a full game: survivors carry over and the game ends with a winner', async (t) => {
+  const { httpServer, io } = createGameServer({
+    roundOptions: { cycles: 1, greenMinMs: 50, greenMaxMs: 50, redMs: 5000, graceMs: 0 },
+  });
+  await new Promise((resolve) => httpServer.listen(0, resolve));
+  const url = `http://localhost:${httpServer.address().port}`;
+  const host = connect(url);
+  const p1 = connect(url);
+  const p2 = connect(url);
+  t.after(() => {
+    for (const s of [host, p1, p2]) s.close();
+    io.close();
+  });
+
+  const { code } = await emitWithAck(host, 'host:create');
+  await emitWithAck(p1, 'player:join', { code, name: 'Ann' });
+  const tooFew = await emitWithAck(host, 'host:game-start');
+  assert.equal(tooFew.error.code, 'NOT_ENOUGH_PLAYERS');
+  await emitWithAck(p2, 'player:join', { code, name: 'Ben' });
+
+  const playing = once(p1, 'game:state');
+  const rlStart = once(p1, 'rl:start');
+  assert.equal((await emitWithAck(host, 'host:game-start')).ok, true);
+  const first = await playing;
+  assert.equal(first.phase, 'playing');
+  assert.equal(first.current, 'Red Light, Green Light');
+  assert.deepEqual((await rlStart).players.map((p) => p.name), ['Ann', 'Ben']);
+
+  // Practice rounds and a second game are blocked while the game runs.
+  assert.equal((await emitWithAck(host, 'host:start-tug')).error.code, 'ROUND_RUNNING');
+  assert.equal((await emitWithAck(host, 'host:game-start')).error.code, 'ROUND_RUNNING');
+
+  // Ann moves during red and is eliminated; the host ends the round, Ben stays in.
+  await new Promise((resolve) => {
+    p1.on('rl:phase', (info) => { if (info.phase === 'red') resolve(); });
+  });
+  const annOut = once(p1, 'rl:player');
+  p1.emit('player:motion', 9);
+  await annOut;
+  const final = once(p2, 'game:state');
+  await emitWithAck(host, 'host:end-round');
+  const state = await final;
+  assert.equal(state.phase, 'over');
+  assert.deepEqual(state.winners.map((w) => w.name), ['Ben']);
+  assert.deepEqual(state.out.map((o) => [o.name, o.round]), [['Ann', 'Red Light, Green Light']]);
+
+  // The game is over, so practice rounds work again.
+  assert.equal((await emitWithAck(host, 'host:game-next')).error.code, 'NO_NEXT_ROUND');
+  const ended = once(p1, 'game:state');
+  assert.equal((await emitWithAck(host, 'host:game-end')).ok, true);
+  assert.equal(await ended, null);
+});
+
 test('serves the player and host pages', async (t) => {
   const { httpServer, io } = createGameServer();
   await new Promise((resolve) => httpServer.listen(0, resolve));
