@@ -23,11 +23,19 @@
 
     <section id="lobby-view" class="hidden">
       <p>You're in, <strong id="me"></strong>.</p>
-      <p class="muted">Room <span id="room"></span> · Waiting for the host to start.</p>
+      <p class="muted">Room <span id="room"></span> · <span id="lobby-status">Waiting for the host to start.</span></p>
       <p class="muted">Move your phone — you should see this bar move.</p>
-      <div class="meter"><div id="my-meter"></div></div>
-      <p class="error" id="lobby-error"></p>
     </section>
+
+    <section id="game-view" class="hidden">
+      <div class="big-word" id="big-word"></div>
+      <p id="game-hint"></p>
+      <div class="meter progress" id="progress-meter"><div id="my-progress"></div></div>
+    </section>
+
+    <div class="meter hidden" id="motion-meter"><div id="my-meter"></div></div>
+    <p class="muted" id="wake-note"></p>
+    <p class="error" id="status-error"></p>
   </main>
 
   <script src="/socket.io/socket.io.js"></script>

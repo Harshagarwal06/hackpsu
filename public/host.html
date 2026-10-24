@@ -20,6 +20,25 @@
       </div>
     </header>
 
+    <section class="controls">
+      <label class="limit">
+        <span>Movement limit <strong id="threshold-value"></strong></span>
+        <input type="range" id="threshold" step="0.1" disabled>
+        <span class="muted">Lower = stricter. Movement past the white line on a player's bar counts.</span>
+      </label>
+      <div class="buttons">
+        <button id="start-btn" disabled>Start Red Light, Green Light</button>
+        <button id="end-btn" class="secondary hidden">End round</button>
+      </div>
+    </section>
+
+    <section id="phase-banner" class="phase-banner hidden">
+      <div id="phase-text"></div>
+      <div id="phase-cycle" class="muted"></div>
+    </section>
+
+    <section id="results" class="results hidden"></section>
+
     <p><strong id="count">0</strong> <span class="muted">players</span></p>
     <p class="error" id="host-error"></p>
     <section class="players" id="players"></section>

@@ -63,17 +63,85 @@ function joinRoom(code, name) {
   });
 }
 
+// --- Sound -----------------------------------------------------------------
+// Browsers only allow audio after a tap, so the context is created in the join tap.
+let audio = null;
+
+function unlockAudio() {
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return;
+  audio = new Ctx();
+  audio.resume();
+}
+
+function tone(freqFrom, freqTo, seconds, type = 'square', volume = 0.3) {
+  if (!audio) return;
+  const osc = audio.createOscillator();
+  const gain = audio.createGain();
+  const t = audio.currentTime;
+  osc.type = type;
+  osc.frequency.setValueAtTime(freqFrom, t);
+  osc.frequency.exponentialRampToValueAtTime(freqTo, t + seconds);
+  gain.gain.setValueAtTime(volume, t);
+  gain.gain.exponentialRampToValueAtTime(0.001, t + seconds);
+  osc.connect(gain).connect(audio.destination);
+  osc.start(t);
+  osc.stop(t + seconds);
+}
+
+// --- Keep the screen on ----------------------------------------------------
+// If the screen locks, motion stops being sent. Not every browser supports this,
+// so tell the player to keep the screen on themselves when it fails.
+async function keepScreenOn() {
+  if (!('wakeLock' in navigator)) {
+    $('wake-note').textContent = 'Keep your screen on while playing.';
+    return;
+  }
+  try {
+    await navigator.wakeLock.request('screen');
+    $('wake-note').textContent = '';
+  } catch (err) {
+    $('wake-note').textContent = `Keep your screen on while playing (${err.message}).`;
+  }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && myId) keepScreenOn();
+});
+
+// --- Screens ---------------------------------------------------------------
+let myId = null;
+let myStatus = 'playing';
+let inRound = false;
+let sittingOut = false; // joined while a round was already running
+
+function showScreen(screen, word, hint) {
+  document.body.dataset.screen = screen;
+  $('lobby-view').classList.toggle('hidden', screen !== 'lobby');
+  $('game-view').classList.toggle('hidden', screen === 'lobby');
+  $('big-word').textContent = word || '';
+  $('game-hint').textContent = hint || '';
+}
+
 $('join-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   $('join-error').textContent = '';
   $('join-btn').disabled = true;
   try {
+    unlockAudio();
+    keepScreenOn();
     await requestMotionPermission();
     const res = await joinRoom($('code').value, $('name').value);
+    myId = res.id;
     $('me').textContent = res.name;
     $('room').textContent = res.code;
+    if (res.roundRunning) {
+      sittingOut = true;
+      $('lobby-status').textContent = 'A round is in progress. You will play the next one.';
+    }
     $('join-view').classList.add('hidden');
-    $('lobby-view').classList.remove('hidden');
+    $('motion-meter').classList.remove('hidden');
+    showScreen('lobby');
     startStreamingMotion();
   } catch (err) {
     $('join-error').textContent = err.message;
@@ -81,14 +149,62 @@ $('join-form').addEventListener('submit', async (e) => {
   }
 });
 
+socket.on('rl:phase', ({ phase }) => {
+  if (!myId || sittingOut) return;
+  if (!inRound) {
+    // First light of a new round.
+    inRound = true;
+    myStatus = 'playing';
+    $('my-progress').style.width = '0%';
+  }
+  if (myStatus !== 'playing') return;
+  if (phase === 'green') {
+    showScreen('green', 'GREEN LIGHT', 'Move! Fill your bar to cross the line.');
+    tone(440, 660, 0.2, 'sine');
+  } else {
+    showScreen('red', 'RED LIGHT', 'FREEZE. Don\'t move.');
+    tone(220, 110, 0.4, 'sawtooth');
+  }
+});
+
+socket.on('rl:player', ({ id, status, progress }) => {
+  if (id !== myId) return;
+  $('my-progress').style.width = `${progress * 100}%`;
+  if (status === myStatus) return;
+  myStatus = status;
+  if (status === 'eliminated') {
+    showScreen('eliminated', 'ELIMINATED', 'You moved. Watch the big screen.');
+    tone(900, 60, 1.5, 'sawtooth', 0.6);
+    if (navigator.vibrate) navigator.vibrate([400, 100, 400]);
+  } else if (status === 'finished') {
+    showScreen('finished', 'YOU CROSSED', 'Safe! Wait for the others.');
+    tone(523, 1046, 0.5, 'sine');
+  }
+});
+
+socket.on('rl:over', ({ results }) => {
+  if (!myId) return;
+  inRound = false;
+  if (sittingOut) {
+    // Joined mid-round: they play the next one.
+    sittingOut = false;
+    $('lobby-status').textContent = 'Waiting for the host to start the next round.';
+    return;
+  }
+  const me = results.find((r) => r.id === myId);
+  if (!me) return;
+  const word = { finished: 'YOU SURVIVED', eliminated: 'ELIMINATED', playing: 'ROUND ENDED' }[me.status];
+  showScreen(me.status === 'eliminated' ? 'eliminated' : 'finished', word, 'Waiting for the next round.');
+});
+
 socket.on('room:closed', () => {
-  $('lobby-error').textContent = 'The host closed the room. Reload to join a new one.';
+  $('status-error').textContent = 'The host closed the room. Reload to join a new one.';
 });
 
 socket.on('server:error', (error) => {
-  $('lobby-error').textContent = error.message;
+  $('status-error').textContent = error.message;
 });
 
 socket.on('disconnect', () => {
-  $('lobby-error').textContent = 'Lost connection to the server. Reload to rejoin.';
+  $('status-error').textContent = 'Lost connection to the server. Reload to rejoin.';
 });

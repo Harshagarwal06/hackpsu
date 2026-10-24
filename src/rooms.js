@@ -4,6 +4,10 @@
 const CODE_LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
 const CODE_LENGTH = 4;
 const MAX_NAME_LENGTH = 16;
+// Sensitivity threshold in m/s²: motion above this counts as "moving".
+const DEFAULT_THRESHOLD = 1.5;
+const MIN_THRESHOLD = 0.1;
+const MAX_THRESHOLD = 15;
 
 class RoomError extends Error {
   constructor(code, message) {
@@ -40,7 +44,7 @@ class RoomStore {
       }
       code = this.generateCode();
     }
-    const room = { code, hostId, players: new Map() };
+    const room = { code, hostId, players: new Map(), threshold: DEFAULT_THRESHOLD, round: null };
     this.rooms.set(code, room);
     this.memberOf.set(hostId, code);
     return room;
@@ -99,6 +103,24 @@ class RoomStore {
     return { room, wasHost: false };
   }
 
+  // Returns the room this socket hosts, or throws if it is not a host.
+  hostedRoom(socketId) {
+    const room = this.roomOf(socketId);
+    if (!room || room.hostId !== socketId) {
+      throw new RoomError('NOT_HOST', 'Only the host can do that.');
+    }
+    return room;
+  }
+
+  setThreshold(hostId, value) {
+    const room = this.hostedRoom(hostId);
+    if (typeof value !== 'number' || !(value >= MIN_THRESHOLD && value <= MAX_THRESHOLD)) {
+      throw new RoomError('BAD_THRESHOLD', `Sensitivity must be between ${MIN_THRESHOLD} and ${MAX_THRESHOLD}.`);
+    }
+    room.threshold = value;
+    return room;
+  }
+
   roomOf(socketId) {
     const code = this.memberOf.get(socketId);
     return code ? this.rooms.get(code) : undefined;
@@ -109,4 +131,13 @@ function publicPlayers(room) {
   return [...room.players.values()].map(({ id, name }) => ({ id, name }));
 }
 
-module.exports = { RoomStore, RoomError, randomCode, publicPlayers, MAX_NAME_LENGTH };
+module.exports = {
+  RoomStore,
+  RoomError,
+  randomCode,
+  publicPlayers,
+  MAX_NAME_LENGTH,
+  DEFAULT_THRESHOLD,
+  MIN_THRESHOLD,
+  MAX_THRESHOLD,
+};

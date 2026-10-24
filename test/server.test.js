@@ -51,6 +51,55 @@ test('host + player socket flow', async (t) => {
   await closed;
 });
 
+test('Red Light, Green Light over sockets', async (t) => {
+  const { httpServer, io } = createGameServer({
+    roundOptions: { cycles: 1, greenMinMs: 50, greenMaxMs: 50, redMs: 5000, graceMs: 0 },
+  });
+  await new Promise((resolve) => httpServer.listen(0, resolve));
+  const url = `http://localhost:${httpServer.address().port}`;
+  const host = connect(url);
+  const p1 = connect(url);
+  const p2 = connect(url);
+  t.after(() => {
+    for (const s of [host, p1, p2]) s.close();
+    io.close();
+  });
+
+  const { code } = await emitWithAck(host, 'host:create');
+  const empty = await emitWithAck(host, 'host:start-redlight');
+  assert.equal(empty.error.code, 'NO_PLAYERS');
+
+  const ann = await emitWithAck(p1, 'player:join', { code, name: 'Ann' });
+  await emitWithAck(p2, 'player:join', { code, name: 'Ben' });
+
+  const notHost = await emitWithAck(p1, 'host:start-redlight');
+  assert.equal(notHost.error.code, 'NOT_HOST');
+  const threshold = await emitWithAck(host, 'host:threshold', 2);
+  assert.equal(threshold.threshold, 2);
+
+  const green = once(p2, 'rl:phase');
+  assert.equal((await emitWithAck(host, 'host:start-redlight')).ok, true);
+  assert.equal((await green).phase, 'green');
+  const again = await emitWithAck(host, 'host:start-redlight');
+  assert.equal(again.error.code, 'ROUND_RUNNING');
+
+  // Wait for red, then Ann moves.
+  await new Promise((resolve) => {
+    p1.on('rl:phase', (info) => { if (info.phase === 'red') resolve(); });
+  });
+  const hostSeesOut = once(host, 'rl:player');
+  const annSeesOut = once(p1, 'rl:player');
+  p1.emit('player:motion', 9);
+  assert.deepEqual(await hostSeesOut, { id: ann.id, status: 'eliminated', progress: 0 });
+  assert.equal((await annSeesOut).status, 'eliminated');
+
+  const over = once(p2, 'rl:over');
+  assert.equal((await emitWithAck(host, 'host:end-round')).ok, true);
+  const summary = await over;
+  assert.equal(summary.reason, 'host');
+  assert.deepEqual(summary.results.map((r) => [r.name, r.status]), [['Ann', 'eliminated'], ['Ben', 'playing']]);
+});
+
 test('serves the player and host pages', async (t) => {
   const { httpServer, io } = createGameServer();
   await new Promise((resolve) => httpServer.listen(0, resolve));

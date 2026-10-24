@@ -2,9 +2,13 @@ const http = require('node:http');
 const path = require('node:path');
 const express = require('express');
 const { Server } = require('socket.io');
-const { RoomStore, RoomError, publicPlayers } = require('./src/rooms');
+const {
+  RoomStore, RoomError, publicPlayers, MIN_THRESHOLD, MAX_THRESHOLD,
+} = require('./src/rooms');
+const { RedLightRound } = require('./src/redLight');
 
-function createGameServer() {
+// roundOptions lets tests run Red Light with short timers.
+function createGameServer({ roundOptions } = {}) {
   const app = express();
   app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
 
@@ -29,26 +33,77 @@ function createGameServer() {
     }
   }
 
+  function startRedLight(room) {
+    if (room.round) throw new RoomError('ROUND_RUNNING', 'A round is already running.');
+    if (room.players.size === 0) throw new RoomError('NO_PLAYERS', 'Wait for at least one player to join.');
+    const names = new Map([...room.players.values()].map((p) => [p.id, p.name]));
+    const round = new RedLightRound({
+      players: names,
+      getThreshold: () => room.threshold,
+      options: roundOptions,
+      on: {
+        phase: (info) => io.to(room.code).emit('rl:phase', info),
+        // Progress updates go only to the host and that player, not every phone.
+        player: (id, state) => io.to([room.hostId, id]).emit('rl:player', { id, ...state }),
+        over: (summary) => {
+          room.round = null;
+          io.to(room.code).emit('rl:over', summary);
+        },
+      },
+    });
+    room.round = round;
+    round.start();
+  }
+
   io.on('connection', (socket) => {
     socket.on('host:create', (ack) => {
       handle(socket, () => {
         const room = store.createRoom(socket.id);
-        return { code: room.code };
+        socket.join(room.code);
+        return {
+          code: room.code,
+          threshold: room.threshold,
+          minThreshold: MIN_THRESHOLD,
+          maxThreshold: MAX_THRESHOLD,
+        };
+      }, ack);
+    });
+
+    socket.on('host:threshold', (value, ack) => {
+      handle(socket, () => ({ threshold: store.setThreshold(socket.id, value).threshold }), ack);
+    });
+
+    socket.on('host:start-redlight', (ack) => {
+      handle(socket, () => {
+        startRedLight(store.hostedRoom(socket.id));
+        return {};
+      }, ack);
+    });
+
+    socket.on('host:end-round', (ack) => {
+      handle(socket, () => {
+        const room = store.hostedRoom(socket.id);
+        if (!room.round) throw new RoomError('NO_ROUND', 'No round is running.');
+        room.round.stop();
+        return {};
       }, ack);
     });
 
     socket.on('player:join', (payload, ack) => {
       handle(socket, () => {
         const { room, player } = store.joinRoom(payload?.code, socket.id, payload?.name);
+        socket.join(room.code);
         io.to(room.hostId).emit('room:players', publicPlayers(room));
-        return { code: room.code, name: player.name };
+        return { id: socket.id, code: room.code, name: player.name, roundRunning: Boolean(room.round) };
       }, ack);
     });
 
     socket.on('player:motion', (value) => {
       handle(socket, () => {
         const room = store.updateMotion(socket.id, value);
-        if (room) io.to(room.hostId).volatile.emit('player:motion', { id: socket.id, m: value });
+        if (!room) return {};
+        io.to(room.hostId).volatile.emit('player:motion', { id: socket.id, m: value });
+        if (room.round) room.round.handleMotion(socket.id, value);
         return {};
       });
     });
@@ -57,10 +112,10 @@ function createGameServer() {
       const left = store.leave(socket.id);
       if (!left) return;
       if (left.wasHost) {
-        for (const playerId of left.room.players.keys()) {
-          io.to(playerId).emit('room:closed');
-        }
+        if (left.room.round) left.room.round.cancel();
+        io.to(left.room.code).emit('room:closed');
       } else {
+        if (left.room.round) left.room.round.removePlayer(socket.id);
         io.to(left.room.hostId).emit('room:players', publicPlayers(left.room));
       }
     });

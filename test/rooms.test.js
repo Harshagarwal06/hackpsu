@@ -60,6 +60,17 @@ test('player leaving removes only that player', () => {
   assert.equal(store.leave('p1'), null);
 });
 
+test('only the host can change the threshold, within limits', () => {
+  const store = storeWithCodes('ABCD');
+  store.createRoom('host');
+  store.joinRoom('ABCD', 'p1', 'Sam');
+  assert.equal(store.setThreshold('host', 3).threshold, 3);
+  assert.throws(() => store.setThreshold('p1', 3), { code: 'NOT_HOST' });
+  assert.throws(() => store.setThreshold('host', 0), { code: 'BAD_THRESHOLD' });
+  assert.throws(() => store.setThreshold('host', 99), { code: 'BAD_THRESHOLD' });
+  assert.throws(() => store.setThreshold('host', NaN), { code: 'BAD_THRESHOLD' });
+});
+
 test('host leaving closes the room for everyone', () => {
   const store = storeWithCodes('ABCD');
   store.createRoom('host');

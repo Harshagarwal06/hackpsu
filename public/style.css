@@ -115,3 +115,68 @@ input {
 }
 
 .player-card .name { font-weight: 700; }
+
+.card-top { display: flex; justify-content: space-between; gap: 8px; }
+.player-card .status { font-weight: 700; font-size: 0.9rem; }
+.player-card[data-status="eliminated"] { opacity: 0.45; }
+.player-card[data-status="eliminated"] .name { text-decoration: line-through; }
+.player-card[data-status="eliminated"] .status { color: var(--red); }
+.player-card[data-status="finished"] { outline: 2px solid var(--teal); }
+.player-card[data-status="finished"] .status { color: var(--teal); }
+
+.meter { position: relative; }
+.meter.progress { height: 8px; margin-top: 8px; }
+.meter.progress > div { background: var(--pink); }
+.meter .marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: white;
+}
+
+button.secondary { background: #333; }
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 1rem;
+  margin: 1.5rem 0;
+  padding: 16px;
+  background: var(--panel);
+  border-radius: 12px;
+}
+
+.controls .limit { display: grid; gap: 6px; flex: 1 1 280px; max-width: 480px; }
+.controls input[type="range"] { padding: 0; accent-color: var(--pink); }
+.controls .buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.phase-banner {
+  text-align: center;
+  padding: 24px;
+  border-radius: 16px;
+  margin-bottom: 1rem;
+  font-size: clamp(2.5rem, 8vw, 6rem);
+  font-weight: 900;
+}
+.phase-banner #phase-cycle { font-size: 1.1rem; font-weight: 600; color: rgba(255, 255, 255, 0.8); }
+.phase-banner[data-phase="green"] { background: #128a3e; }
+.phase-banner[data-phase="red"] { background: #c8102e; }
+
+.results {
+  background: var(--panel);
+  border-radius: 12px;
+  padding: 8px 16px;
+  margin-bottom: 1rem;
+}
+
+/* Player page: full-screen color during the round */
+body[data-screen="green"] { background: #128a3e; }
+body[data-screen="red"] { background: #c8102e; }
+body[data-screen="eliminated"] { background: #000; }
+body[data-screen="finished"] { background: #0d4f4d; }
+
+.big-word { font-size: clamp(2.5rem, 14vw, 4.5rem); font-weight: 900; margin: 1.5rem 0 0.5rem; line-height: 1; }
+body[data-screen="eliminated"] .big-word { color: var(--red); }
