@@ -6,9 +6,10 @@ const {
   RoomStore, RoomError, publicPlayers, MIN_THRESHOLD, MAX_THRESHOLD,
 } = require('./src/rooms');
 const { RedLightRound } = require('./src/redLight');
+const { TugOfWarRound } = require('./src/tugOfWar');
 
-// roundOptions lets tests run Red Light with short timers.
-function createGameServer({ roundOptions } = {}) {
+// roundOptions / tugOptions let tests run rounds with short timers.
+function createGameServer({ roundOptions, tugOptions } = {}) {
   const app = express();
   app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
 
@@ -55,6 +56,26 @@ function createGameServer({ roundOptions } = {}) {
     round.start();
   }
 
+  function startTugOfWar(room) {
+    if (room.round) throw new RoomError('ROUND_RUNNING', 'A round is already running.');
+    if (room.players.size < 2) throw new RoomError('NOT_ENOUGH_PLAYERS', 'Tug of War needs at least 2 players.');
+    const names = new Map([...room.players.values()].map((p) => [p.id, p.name]));
+    const round = new TugOfWarRound({
+      players: names,
+      options: tugOptions,
+      on: {
+        start: (info) => io.to(room.code).emit('tow:start', info),
+        state: (info) => io.to(room.code).volatile.emit('tow:state', info),
+        over: (summary) => {
+          room.round = null;
+          io.to(room.code).emit('tow:over', summary);
+        },
+      },
+    });
+    room.round = round;
+    round.start();
+  }
+
   io.on('connection', (socket) => {
     socket.on('host:create', (ack) => {
       handle(socket, () => {
@@ -76,6 +97,13 @@ function createGameServer({ roundOptions } = {}) {
     socket.on('host:start-redlight', (ack) => {
       handle(socket, () => {
         startRedLight(store.hostedRoom(socket.id));
+        return {};
+      }, ack);
+    });
+
+    socket.on('host:start-tug', (ack) => {
+      handle(socket, () => {
+        startTugOfWar(store.hostedRoom(socket.id));
         return {};
       }, ack);
     });

@@ -28,6 +28,7 @@
       </label>
       <div class="buttons">
         <button id="start-btn" disabled>Start Red Light, Green Light</button>
+        <button id="tug-btn" disabled>Start Tug of War</button>
         <button id="end-btn" class="secondary hidden">End round</button>
       </div>
     </section>
@@ -35,6 +36,32 @@
     <section id="phase-banner" class="phase-banner hidden">
       <div id="phase-text"></div>
       <div id="phase-cycle" class="muted"></div>
+    </section>
+
+    <section id="tow-view" class="tow hidden">
+      <div class="tow-head">
+        <div class="tow-team" data-team="pink">
+          <div class="tow-label">PINK</div>
+          <div class="meter"><div id="force-pink"></div></div>
+          <div class="muted tow-names" id="names-pink"></div>
+        </div>
+        <div class="tow-center">
+          <div class="tow-big" id="tow-big"></div>
+          <div class="muted" id="tow-timer"></div>
+        </div>
+        <div class="tow-team" data-team="teal">
+          <div class="tow-label">TEAL</div>
+          <div class="meter"><div id="force-teal"></div></div>
+          <div class="muted tow-names" id="names-teal"></div>
+        </div>
+      </div>
+      <div class="rope-track">
+        <span class="win-line pink"></span>
+        <span class="center-line"></span>
+        <span class="win-line teal"></span>
+        <div class="rope"></div>
+        <div class="knot" id="knot"></div>
+      </div>
     </section>
 
     <section id="results" class="results hidden"></section>

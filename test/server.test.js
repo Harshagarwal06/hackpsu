@@ -100,6 +100,42 @@ test('Red Light, Green Light over sockets', async (t) => {
   assert.deepEqual(summary.results.map((r) => [r.name, r.status]), [['Ann', 'eliminated'], ['Ben', 'playing']]);
 });
 
+test('Tug of War over sockets', async (t) => {
+  const { httpServer, io } = createGameServer({
+    tugOptions: { countdownMs: 50, durationMs: 5000, pullRate: 1 },
+  });
+  await new Promise((resolve) => httpServer.listen(0, resolve));
+  const url = `http://localhost:${httpServer.address().port}`;
+  const host = connect(url);
+  const p1 = connect(url);
+  const p2 = connect(url);
+  t.after(() => {
+    for (const s of [host, p1, p2]) s.close();
+    io.close();
+  });
+
+  const { code } = await emitWithAck(host, 'host:create');
+  await emitWithAck(p1, 'player:join', { code, name: 'Ann' });
+  const lonely = await emitWithAck(host, 'host:start-tug');
+  assert.equal(lonely.error.code, 'NOT_ENOUGH_PLAYERS');
+  await emitWithAck(p2, 'player:join', { code, name: 'Ben' });
+
+  const started = once(p1, 'tow:start');
+  assert.equal((await emitWithAck(host, 'host:start-tug')).ok, true);
+  const { teams } = await started;
+  const teamOf = Object.fromEntries(teams.map((m) => [m.name, m.team]));
+  assert.notEqual(teamOf.Ann, teamOf.Ben);
+
+  // Ann shakes hard every 50 ms until the round ends.
+  const done = once(host, 'tow:over');
+  const shaking = setInterval(() => p1.emit('player:motion', 20), 50);
+  const summary = await done;
+  clearInterval(shaking);
+  assert.equal(summary.reason, 'pulled');
+  assert.equal(summary.winner, teamOf.Ann);
+  assert.deepEqual(summary.results.map((r) => [r.name, r.status]).sort(), [['Ann', 'won'], ['Ben', 'eliminated']]);
+});
+
 test('serves the player and host pages', async (t) => {
   const { httpServer, io } = createGameServer();
   await new Promise((resolve) => httpServer.listen(0, resolve));

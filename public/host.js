@@ -51,7 +51,16 @@ $('start-btn').addEventListener('click', () => {
     roundState.clear();
     for (const p of players) roundState.set(p.id, { status: 'playing', progress: 0 });
     $('results').classList.add('hidden');
+    $('tow-view').classList.add('hidden');
     renderPlayers();
+  });
+});
+
+$('tug-btn').addEventListener('click', () => {
+  showError(null);
+  socket.emit('host:start-tug', (res) => {
+    if (!res.ok) return showError(res.error);
+    $('results').classList.add('hidden');
   });
 });
 
@@ -60,11 +69,13 @@ $('end-btn').addEventListener('click', () => {
 });
 
 function updateButtons() {
-  $('start-btn').disabled = roundRunning || players.length === 0 || $('room-code').textContent.includes('·');
+  const noRoom = $('room-code').textContent.includes('·');
+  $('start-btn').disabled = roundRunning || players.length === 0 || noRoom;
+  $('tug-btn').disabled = roundRunning || players.length < 2 || noRoom;
   $('end-btn').classList.toggle('hidden', !roundRunning);
 }
 
-const STATUS_LABEL = { playing: '', finished: '✓ Crossed', eliminated: '✕ Eliminated' };
+const STATUS_LABEL = { playing: '', finished: '✓ Crossed', won: '✓ Won', eliminated: '✕ Eliminated' };
 
 function renderPlayers() {
   $('count').textContent = players.length;
@@ -99,10 +110,30 @@ function applyRoundState(id) {
   const state = roundState.get(id);
   const status = state ? state.status : 'playing';
   c.card.dataset.status = status;
+  c.card.dataset.team = state?.team || '';
   c.status.textContent = STATUS_LABEL[status];
-  c.progress.parentElement.classList.toggle('hidden', !state);
-  c.progress.style.width = `${(state ? state.progress : 0) * 100}%`;
+  // Only Red Light has a progress bar.
+  const hasProgress = state?.progress !== undefined;
+  c.progress.parentElement.classList.toggle('hidden', !hasProgress);
+  c.progress.style.width = `${(hasProgress ? state.progress : 0) * 100}%`;
 }
+
+function showResults(heading, groups) {
+  const box = $('results');
+  box.replaceChildren();
+  const h = document.createElement('h2');
+  h.textContent = heading;
+  box.append(h);
+  for (const [label, names] of groups) {
+    if (names.length === 0) continue;
+    const line = document.createElement('p');
+    line.textContent = `${label}: ${names.join(', ')}`;
+    box.append(line);
+  }
+  box.classList.remove('hidden');
+}
+
+const namesWith = (results, status) => results.filter((r) => r.status === status).map((r) => r.name);
 
 socket.on('room:players', (list) => {
   players = list;
@@ -138,22 +169,61 @@ socket.on('rl:over', ({ reason, results }) => {
     roundState.set(r.id, { status: r.status, progress: prev ? prev.progress : 0 });
     applyRoundState(r.id);
   }
-  const crossed = results.filter((r) => r.status === 'finished').map((r) => r.name);
-  const out = results.filter((r) => r.status === 'eliminated').map((r) => r.name);
-  const still = results.filter((r) => r.status === 'playing').map((r) => r.name);
-  const heading = reason === 'host' ? 'Round ended by host' : 'Round over';
-  const box = $('results');
-  box.replaceChildren();
-  const h = document.createElement('h2');
-  h.textContent = heading;
-  box.append(h);
-  for (const [label, names] of [['Crossed', crossed], ['Still in', still], ['Eliminated', out]]) {
-    if (names.length === 0) continue;
-    const line = document.createElement('p');
-    line.textContent = `${label}: ${names.join(', ')}`;
-    box.append(line);
+  showResults(reason === 'host' ? 'Round ended by host' : 'Round over', [
+    ['Crossed', namesWith(results, 'finished')],
+    ['Still in', namesWith(results, 'playing')],
+    ['Eliminated', namesWith(results, 'eliminated')],
+  ]);
+});
+
+// --- Tug of War ------------------------------------------------------------
+
+socket.on('tow:start', ({ teams }) => {
+  roundRunning = true;
+  updateButtons();
+  roundState.clear();
+  for (const t of teams) roundState.set(t.id, { status: 'playing', team: t.team });
+  renderPlayers();
+  for (const team of ['pink', 'teal']) {
+    $(`names-${team}`).textContent = teams.filter((t) => t.team === team).map((t) => t.name).join(', ');
   }
-  box.classList.remove('hidden');
+  $('tow-view').dataset.winner = '';
+  $('tow-big').textContent = 'GET READY';
+  $('tow-timer').textContent = '';
+  $('knot').style.left = '50%';
+  $('tow-view').classList.remove('hidden');
+});
+
+socket.on('tow:state', ({ phase, rope, force, msLeft }) => {
+  // rope: +1 = Pink wins (left), -1 = Teal wins (right).
+  $('knot').style.left = `${50 - rope * 50}%`;
+  $('force-pink').style.width = `${Math.min(force.pink / METER_MAX, 1) * 100}%`;
+  $('force-teal').style.width = `${Math.min(force.teal / METER_MAX, 1) * 100}%`;
+  $('tow-big').textContent = phase === 'countdown' ? 'GET READY' : 'SHAKE!';
+  $('tow-timer').textContent = `${Math.ceil(msLeft / 1000)}s`;
+});
+
+socket.on('tow:over', ({ reason, winner, results }) => {
+  roundRunning = false;
+  updateButtons();
+  for (const r of results) {
+    roundState.set(r.id, { status: r.status, team: r.team });
+    applyRoundState(r.id);
+  }
+  $('tow-view').dataset.winner = winner || '';
+  $('tow-big').textContent = winner ? `${winner.toUpperCase()} WINS` : 'NO WINNER';
+  $('tow-timer').textContent = '';
+  const heading = {
+    pulled: `${winner?.toUpperCase()} pulled it across!`,
+    time: winner ? `Time! ${winner.toUpperCase()} was ahead` : 'Time! Dead even',
+    forfeit: winner ? `${winner.toUpperCase()} wins: the other team left` : 'Everyone left',
+    host: 'Round ended by host',
+  }[reason];
+  showResults(heading, [
+    ['Won', namesWith(results, 'won')],
+    ['Still in', namesWith(results, 'playing')],
+    ['Eliminated', namesWith(results, 'eliminated')],
+  ]);
 });
 
 socket.on('disconnect', () => {

@@ -156,6 +156,8 @@ socket.on('rl:phase', ({ phase }) => {
     inRound = true;
     myStatus = 'playing';
     $('my-progress').style.width = '0%';
+    $('progress-meter').classList.remove('hidden');
+    $('my-rope').classList.add('hidden');
   }
   if (myStatus !== 'playing') return;
   if (phase === 'green') {
@@ -182,19 +184,74 @@ socket.on('rl:player', ({ id, status, progress }) => {
   }
 });
 
-socket.on('rl:over', ({ results }) => {
-  if (!myId) return;
+// Common end-of-round handling. Returns this player's result, or null if they
+// weren't in the round.
+function roundOver(results) {
+  if (!myId) return null;
   inRound = false;
   if (sittingOut) {
     // Joined mid-round: they play the next one.
     sittingOut = false;
     $('lobby-status').textContent = 'Waiting for the host to start the next round.';
-    return;
+    return null;
   }
-  const me = results.find((r) => r.id === myId);
+  return results.find((r) => r.id === myId) || null;
+}
+
+socket.on('rl:over', ({ results }) => {
+  const me = roundOver(results);
   if (!me) return;
   const word = { finished: 'YOU SURVIVED', eliminated: 'ELIMINATED', playing: 'ROUND ENDED' }[me.status];
   showScreen(me.status === 'eliminated' ? 'eliminated' : 'finished', word, 'Waiting for the next round.');
+});
+
+// --- Tug of War --------------------------------------------------------------
+let myTeam = null;
+let towPhase = null;
+
+socket.on('tow:start', ({ teams }) => {
+  if (!myId || sittingOut) return;
+  const mine = teams.find((t) => t.id === myId);
+  if (!mine) return;
+  inRound = true;
+  myTeam = mine.team;
+  towPhase = 'countdown';
+  $('progress-meter').classList.add('hidden');
+  $('my-rope').classList.remove('hidden');
+  $('my-knot').style.left = '50%';
+  showScreen(myTeam, 'GET READY', `You're on Team ${myTeam.toUpperCase()}. Shake when it says SHAKE!`);
+});
+
+socket.on('tow:state', ({ phase, rope }) => {
+  if (!myTeam) return;
+  // Your team's side is always on the left of your screen.
+  const mySide = myTeam === 'pink' ? rope : -rope;
+  $('my-knot').style.left = `${50 - mySide * 50}%`;
+  if (phase !== 'pull') return;
+  if (towPhase !== 'pull') {
+    towPhase = 'pull';
+    tone(330, 880, 0.3, 'square');
+  }
+  const hint = mySide > 0.05 ? 'Winning! Keep shaking!' : mySide < -0.05 ? 'Losing! SHAKE HARDER!' : 'Dead even. SHAKE!';
+  showScreen(myTeam, 'SHAKE!', hint);
+});
+
+socket.on('tow:over', ({ results }) => {
+  const me = roundOver(results);
+  myTeam = null;
+  towPhase = null;
+  if (!me) return;
+  $('my-rope').classList.add('hidden');
+  if (me.status === 'won') {
+    showScreen('finished', 'YOUR TEAM WON', 'Waiting for the next round.');
+    tone(523, 1046, 0.5, 'sine');
+  } else if (me.status === 'eliminated') {
+    showScreen('eliminated', 'ELIMINATED', 'Your team lost the tug of war.');
+    tone(900, 60, 1.5, 'sawtooth', 0.6);
+    if (navigator.vibrate) navigator.vibrate([400, 100, 400]);
+  } else {
+    showScreen('finished', 'ROUND ENDED', 'Waiting for the next round.');
+  }
 });
 
 socket.on('room:closed', () => {
