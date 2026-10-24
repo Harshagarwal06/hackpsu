@@ -53,6 +53,25 @@ test('a round that would knock out everyone eliminates nobody', () => {
   assert.equal(game.phase, 'intermission');
 });
 
+test('if everyone falls on the bridge, whoever got furthest wins', () => {
+  const game = new Game(players('Ann', 'Ben', 'Cal'));
+  game.nextRound();
+  game.roundOver([result('ann', 'finished'), result('ben', 'finished'), result('cal', 'finished')]);
+  game.nextRound();
+  game.roundOver([result('ann', 'won'), result('ben', 'won'), result('cal', 'playing')]);
+  game.nextRound();
+  game.roundOver([
+    { id: 'ann', name: 'Ann', status: 'eliminated', reached: 0 },
+    { id: 'ben', name: 'Ben', status: 'eliminated', reached: 2 },
+    { id: 'cal', name: 'Cal', status: 'eliminated', reached: 1 },
+  ]);
+  const s = game.state();
+  assert.equal(s.phase, 'over');
+  assert.deepEqual(s.winners, [{ id: 'ben', name: 'Ben' }]);
+  assert.match(s.note, /Ben got furthest \(to step 3\) and stays in/);
+  assert.deepEqual(s.out.map((o) => o.id), ['ann', 'cal']);
+});
+
 test('players still "playing" (host ended the round) stay in', () => {
   const game = new Game(players('Ann', 'Ben'));
   game.nextRound();

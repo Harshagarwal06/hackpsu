@@ -398,7 +398,9 @@ function applyGame(game) {
   if (game.phase === 'over') {
     if (game.winners.some((w) => w.id === myId)) {
       const others = game.winners.filter((w) => w.id !== myId).map((w) => w.name);
-      const hint = others.length ? `You share the win with ${others.join(', ')}.` : 'Last one standing. Take a bow.';
+      let hint = 'Last one standing. Take a bow.';
+      if (others.length) hint = `You share the win with ${others.join(', ')}.`;
+      else if (game.note) hint = game.note; // e.g. won by getting furthest on the bridge
       showScreen('winner', 'YOU WON', hint);
       tone(523, 1046, 0.3, 'sine');
       setTimeout(() => tone(659, 1318, 0.3, 'sine'), 300);

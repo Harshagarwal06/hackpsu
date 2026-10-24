@@ -41,7 +41,10 @@ class GlassBridgeRound {
       const j = Math.floor(random() * (i + 1));
       [ids[i], ids[j]] = [ids[j], ids[i]];
     }
-    this.players = new Map(ids.map((id) => [id, { id, name: players.get(id), status: 'waiting' }]));
+    // reached: how many steps the player got past (the step they fell on, or
+    // all of them if they crossed). Falls always happen on a new step, so two
+    // players who fell never have the same value.
+    this.players = new Map(ids.map((id) => [id, { id, name: players.get(id), status: 'waiting', reached: 0 }]));
   }
 
   start() {
@@ -98,9 +101,11 @@ class GlassBridgeRound {
 
     if (correct) {
       this.position++;
+      p.reached = this.position;
       if (this.position >= this.steps) p.status = 'finished';
     } else {
       p.status = 'eliminated';
+      p.reached = step;
       this.current = null;
     }
     this.emitState();
@@ -157,13 +162,13 @@ class GlassBridgeRound {
     clearTimeout(this.timer);
     this.phase = 'over';
     this.current = null;
-    const results = [...this.players.values()].map(({ id, name, status }) => {
+    const results = [...this.players.values()].map(({ id, name, status, reached }) => {
       let final = status;
       if (status === 'waiting' || status === 'onBridge') {
         // With the whole bridge revealed, everyone left walks across.
         final = reason === 'crossed' ? 'finished' : 'playing';
       }
-      return { id, name, status: final };
+      return { id, name, status: final, reached: final === 'finished' ? this.steps : reached };
     });
     this.on.over({ reason, steps: this.steps, revealed: this.safe.slice(0, this.revealed), results });
   }

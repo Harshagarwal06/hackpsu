@@ -89,6 +89,18 @@ test('if everyone falls, nobody crosses', (t) => {
   tick(200);
   assert.equal(over(events).reason, 'done');
   assert.deepEqual(statuses(events), { a: 'eliminated', b: 'eliminated' });
+  // Ann fell on step 1 (got past 0 steps), Ben walked across it and fell on step 2.
+  assert.deepEqual(over(events).results.map((r) => [r.id, r.reached]), [['a', 0], ['b', 1]]);
+});
+
+test('crossing players have reached every step', (t) => {
+  const { round, events, tick } = setup(t);
+  round.start();
+  for (let step = 0; step < 3; step++) {
+    round.choose('a', 'right');
+    tick(200);
+  }
+  assert.deepEqual(over(events).results.map((r) => [r.id, r.reached]), [['a', 3], ['b', 3]]);
 });
 
 test('the player on the bridge leaving hands the turn to the next player', (t) => {

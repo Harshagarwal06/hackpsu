@@ -29,19 +29,30 @@ class Game {
   }
 
   // Applies a finished round's results. 'eliminated' players are out, unless
-  // that would knock out everyone who played, in which case nobody is.
+  // that would knock out everyone who played. Then, if the round reports how
+  // far each player got (Glass Bridge's `reached`), whoever got furthest stays
+  // in; otherwise nobody is eliminated.
   roundOver(results) {
     if (this.phase !== 'playing') throw new Error('No game round is being played.');
     const played = results.filter((r) => this.alive.has(r.id));
-    const eliminated = played.filter((r) => r.status === 'eliminated');
+    let eliminated = played.filter((r) => r.status === 'eliminated');
     const roundName = ROUNDS[this.stage].name;
     if (played.length > 0 && eliminated.length === played.length) {
-      this.note = 'Nobody survived that round, so everyone who played gets another chance.';
-    } else {
-      for (const r of eliminated) {
-        this.alive.delete(r.id);
-        this.out.push({ id: r.id, name: r.name, round: roundName });
+      if (played.every((r) => typeof r.reached === 'number')) {
+        const best = Math.max(...played.map((r) => r.reached));
+        const furthest = played.filter((r) => r.reached === best);
+        eliminated = played.filter((r) => r.reached < best);
+        const names = furthest.map((r) => r.name).join(' and ');
+        // A player who fell on step N (1-based) got past N - 1 steps.
+        this.note = `Everyone fell, but ${names} got furthest (to step ${best + 1}) and ${furthest.length > 1 ? 'stay' : 'stays'} in.`;
+      } else {
+        eliminated = [];
+        this.note = 'Nobody survived that round, so everyone who played gets another chance.';
       }
+    }
+    for (const r of eliminated) {
+      this.alive.delete(r.id);
+      this.out.push({ id: r.id, name: r.name, round: roundName });
     }
     this.stage++;
     this.phase = this.stage >= ROUNDS.length || this.alive.size <= 1 ? 'over' : 'intermission';
