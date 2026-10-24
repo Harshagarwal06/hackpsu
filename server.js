@@ -2,6 +2,7 @@ const http = require('node:http');
 const path = require('node:path');
 const express = require('express');
 const { Server } = require('socket.io');
+const QRCode = require('qrcode');
 const {
   RoomStore, RoomError, publicPlayers, MIN_THRESHOLD, MAX_THRESHOLD,
 } = require('./src/rooms');
@@ -14,6 +15,17 @@ const { Game } = require('./src/game');
 function createGameServer({ roundOptions, tugOptions, bridgeOptions } = {}) {
   const app = express();
   app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
+
+  // QR code (SVG) for the join link shown on the host screen.
+  app.get('/qr.svg', async (req, res) => {
+    const url = req.query.url;
+    if (typeof url !== 'string' || !/^https?:\/\//.test(url) || url.length > 300) {
+      res.status(400).type('text/plain').send('Pass ?url= with an http(s) link of at most 300 characters.');
+      return;
+    }
+    const svg = await QRCode.toString(url, { type: 'svg', margin: 1, color: { dark: '#000000', light: '#ffffff' } });
+    res.type('image/svg+xml').send(svg);
+  });
 
   const httpServer = http.createServer(app);
   const io = new Server(httpServer);

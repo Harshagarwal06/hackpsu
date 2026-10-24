@@ -256,3 +256,20 @@ test('serves the player and host pages', async (t) => {
     assert.equal(res.status, 200, `${path} should return 200`);
   }
 });
+
+test('serves a QR code for http(s) join links only', async (t) => {
+  const { httpServer, io } = createGameServer();
+  await new Promise((resolve) => httpServer.listen(0, resolve));
+  t.after(() => io.close());
+  const base = `http://localhost:${httpServer.address().port}`;
+
+  const ok = await fetch(`${base}/qr.svg?url=${encodeURIComponent('https://example.com/?code=ABCD')}`);
+  assert.equal(ok.status, 200);
+  assert.match(ok.headers.get('content-type'), /^image\/svg\+xml/);
+  assert.match(await ok.text(), /^<svg/);
+
+  for (const bad of ['', '?url=javascript:alert(1)', `?url=https://x.com/${'a'.repeat(300)}`]) {
+    const res = await fetch(`${base}/qr.svg${bad}`);
+    assert.equal(res.status, 400, `"${bad.slice(0, 30)}" should be rejected`);
+  }
+});

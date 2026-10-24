@@ -21,6 +21,11 @@ function showError(err) {
 socket.emit('host:create', (res) => {
   if (!res.ok) return showError(res.error);
   $('room-code').textContent = res.code;
+  // The QR opens the phone page with this room's code filled in.
+  const joinLink = `${location.origin}/?code=${res.code}`;
+  $('qr').src = `/qr.svg?url=${encodeURIComponent(joinLink)}`;
+  $('qr').addEventListener('error', () => showError({ message: 'Could not load the QR code. Players can still join with the link and code.' }));
+  $('qr-box').classList.remove('hidden');
   const slider = $('threshold');
   slider.min = res.minThreshold;
   slider.max = res.maxThreshold;

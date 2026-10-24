@@ -101,6 +101,18 @@ input {
   line-height: 1;
 }
 
+.join-box { display: flex; align-items: flex-end; gap: 24px; flex-wrap: wrap; }
+.qr { margin: 0; text-align: center; }
+.qr img {
+  display: block;
+  width: clamp(120px, 16vw, 200px);
+  height: auto;
+  background: white;
+  padding: 6px;
+  border-radius: 10px;
+}
+.qr figcaption { margin-top: 6px; font-weight: 700; color: var(--muted); }
+
 .players {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));

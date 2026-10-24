@@ -129,6 +129,13 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && myId) keepScreenOn();
 });
 
+// Opened from the host's QR code: the room code is in the link, so fill it in.
+const codeFromLink = new URLSearchParams(location.search).get('code');
+if (codeFromLink) {
+  $('code').value = codeFromLink.toUpperCase().slice(0, 4);
+  $('name').focus();
+}
+
 // --- Screens ---------------------------------------------------------------
 let myId = null;
 let myStatus = 'playing';
