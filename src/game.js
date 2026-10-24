@@ -58,10 +58,12 @@ class Game {
     this.phase = this.stage >= ROUNDS.length || this.alive.size <= 1 ? 'over' : 'intermission';
   }
 
-  // A player disconnected.
+  // A player left for good. Returns true if that changed the game (so the
+  // new state needs sending); a finished game keeps its winners as they were.
   removePlayer(id) {
-    if (!this.alive.delete(id)) return;
+    if (this.phase === 'over' || !this.alive.delete(id)) return false;
     if (this.phase === 'intermission' && this.alive.size <= 1) this.phase = 'over';
+    return true;
   }
 
   isActive() {

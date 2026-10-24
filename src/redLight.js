@@ -10,7 +10,8 @@ const DEFAULT_OPTIONS = {
   greenMinMs: 2000,
   greenMaxMs: 5000,
   redMs: 3000,
-  graceMs: 500, // time to react after RED before movement counts
+  graceMs: 500, // time to react after the phone shows RED before movement counts
+  maxSeenDelayMs: 1000, // a phone that never confirms seeing RED gets its grace from here
   finishSteps: 60, // moving samples needed to cross (~6 s of movement at 10 samples/s)
   minStepGapMs: 80, // a phone can't earn steps faster than it is meant to send samples
 };
@@ -30,7 +31,8 @@ class RedLightRound {
     this.redStartedAt = 0;
     this.players = new Map();
     for (const [id, name] of players) {
-      this.players.set(id, { id, name, status: 'playing', steps: 0, lastStepAt: 0 });
+      // redSeenAt: when this player's phone confirmed it is showing RED.
+      this.players.set(id, { id, name, status: 'playing', steps: 0, lastStepAt: 0, redSeenAt: null });
     }
   }
 
@@ -56,6 +58,7 @@ class RedLightRound {
   toRed() {
     this.phase = 'red';
     this.redStartedAt = Date.now();
+    for (const p of this.players.values()) p.redSeenAt = null;
     this.emitPhase();
     this.timer = setTimeout(() => this.toGreen(), this.opts.redMs);
   }
@@ -76,11 +79,39 @@ class RedLightRound {
       if (p.steps >= this.opts.finishSteps) p.status = 'finished';
       this.emitPlayer(p);
       if (p.status === 'finished') this.endIfNobodyPlaying();
-    } else if (this.phase === 'red' && moving && now - this.redStartedAt >= this.opts.graceMs) {
+    } else if (this.phase === 'red' && moving && now - this.graceStart(p) >= this.opts.graceMs) {
       p.status = 'eliminated';
       this.emitPlayer(p);
       this.endIfNobodyPlaying();
     }
+  }
+
+  // The player's phone says it is now showing RED. Their grace period counts
+  // from here, so network delay doesn't eat into their reaction time.
+  seenRed(id) {
+    const p = this.players.get(id);
+    if (!p || this.phase !== 'red' || p.redSeenAt !== null) return;
+    p.redSeenAt = Date.now();
+  }
+
+  // When this player's grace period starts: when their phone confirmed RED,
+  // but no later than maxSeenDelayMs after RED began.
+  graceStart(p) {
+    const latest = this.redStartedAt + this.opts.maxSeenDelayMs;
+    return p.redSeenAt === null ? latest : Math.min(p.redSeenAt, latest);
+  }
+
+  // Everything a reconnecting screen needs to catch up.
+  snapshot() {
+    return {
+      start: { players: [...this.players.values()].map(({ id, name }) => ({ id, name })) },
+      phase: { phase: this.phase, cycle: this.cycle, cycles: this.opts.cycles },
+      players: [...this.players.values()].map((p) => ({
+        id: p.id,
+        status: p.status,
+        progress: Math.min(p.steps / this.opts.finishSteps, 1),
+      })),
+    };
   }
 
   // A player disconnected mid-round.

@@ -146,7 +146,19 @@ class GlassBridgeRound {
   }
 
   emitState() {
-    this.on.state({
+    this.on.state(this.stateInfo());
+  }
+
+  // Everything a reconnecting screen needs to catch up.
+  snapshot() {
+    return {
+      start: { steps: this.steps, order: [...this.players.values()].map(({ id, name }) => ({ id, name })) },
+      state: this.stateInfo(),
+    };
+  }
+
+  stateInfo() {
+    return {
       phase: this.phase,
       steps: this.steps,
       revealed: this.safe.slice(0, this.revealed),
@@ -154,7 +166,7 @@ class GlassBridgeRound {
       position: this.position,
       msLeft: this.phase === 'choosing' ? Math.max(0, this.deadline - Date.now()) : 0,
       players: [...this.players.values()].map(({ id, name, status }) => ({ id, name, status })),
-    });
+    };
   }
 
   finish(reason) {

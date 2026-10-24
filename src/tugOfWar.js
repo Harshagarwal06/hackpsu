@@ -94,10 +94,25 @@ class TugOfWarRound {
   }
 
   emitState(force = this.teamForces()) {
+    this.on.state(this.stateInfo(force));
+  }
+
+  stateInfo(force = this.teamForces()) {
     const msLeft = this.phase === 'pull'
       ? Math.max(0, this.opts.durationMs - (Date.now() - this.pullStartedAt))
       : this.opts.durationMs;
-    this.on.state({ phase: this.phase, rope: this.rope, force, msLeft });
+    return { phase: this.phase, rope: this.rope, force, msLeft };
+  }
+
+  // Everything a reconnecting screen needs to catch up.
+  snapshot() {
+    return {
+      start: {
+        teams: [...this.players.values()].map(({ id, name, team }) => ({ id, name, team })),
+        countdownMs: this.opts.countdownMs,
+      },
+      state: this.stateInfo(),
+    };
   }
 
   // A player disconnected. If their team is now empty, the other team wins.

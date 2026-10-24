@@ -1,4 +1,10 @@
 // Room and player bookkeeping. Pure logic, no sockets, so it can be unit tested.
+//
+// Players and hosts are identified by a stable id and a private rejoin key,
+// not by their socket: a phone that loses its connection (screen lock, Wi-Fi
+// blip, page reload) comes back on a new socket and resumes with its key.
+
+const crypto = require('node:crypto');
 
 // No I or O so codes are easy to read off a projector.
 const CODE_LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -24,17 +30,20 @@ function randomCode() {
   return code;
 }
 
+function randomToken(prefix) {
+  return prefix + crypto.randomBytes(12).toString('base64url');
+}
+
 class RoomStore {
-  constructor({ generateCode = randomCode } = {}) {
+  constructor({ generateCode = randomCode, generateToken = randomToken } = {}) {
     this.generateCode = generateCode;
+    this.generateToken = generateToken;
     this.rooms = new Map(); // code -> room
-    this.memberOf = new Map(); // socket id -> room code
+    this.sockets = new Map(); // socket id -> { code, role: 'host' | 'player', id }
   }
 
-  createRoom(hostId) {
-    if (this.memberOf.has(hostId)) {
-      throw new RoomError('ALREADY_IN_ROOM', 'This connection is already in a room.');
-    }
+  createRoom(socketId) {
+    this.assertFree(socketId);
     let code = this.generateCode();
     let attempts = 0;
     while (this.rooms.has(code)) {
@@ -44,21 +53,39 @@ class RoomStore {
       }
       code = this.generateCode();
     }
-    const room = { code, hostId, players: new Map(), threshold: DEFAULT_THRESHOLD, round: null };
+    const room = {
+      code,
+      hostKey: this.generateToken('h_'),
+      hostSocketId: socketId,
+      hostConnected: true,
+      players: new Map(), // player id -> { id, key, name, socketId, connected }
+      threshold: DEFAULT_THRESHOLD,
+      round: null,
+      game: null,
+    };
     this.rooms.set(code, room);
-    this.memberOf.set(hostId, code);
+    this.sockets.set(socketId, { code, role: 'host' });
     return room;
   }
 
-  joinRoom(rawCode, playerId, rawName) {
-    if (this.memberOf.has(playerId)) {
-      throw new RoomError('ALREADY_IN_ROOM', 'You are already in a room.');
+  // The host's page reconnected (or reloaded) with its key.
+  resumeHost(socketId, rawCode, key) {
+    this.assertFree(socketId);
+    const room = this.findRoom(rawCode);
+    if (typeof key !== 'string' || key !== room.hostKey) {
+      throw new RoomError('BAD_KEY', 'That is not the host key for this room.');
     }
-    const code = String(rawCode ?? '').trim().toUpperCase();
-    const room = this.rooms.get(code);
-    if (!room) {
-      throw new RoomError('ROOM_NOT_FOUND', `No room with code "${code}".`);
-    }
+    // A reload can arrive before the old socket's disconnect does.
+    this.sockets.delete(room.hostSocketId);
+    room.hostSocketId = socketId;
+    room.hostConnected = true;
+    this.sockets.set(socketId, { code: room.code, role: 'host' });
+    return room;
+  }
+
+  joinRoom(rawCode, socketId, rawName) {
+    this.assertFree(socketId);
+    const room = this.findRoom(rawCode);
     const name = String(rawName ?? '').trim();
     if (name.length === 0 || name.length > MAX_NAME_LENGTH) {
       throw new RoomError('BAD_NAME', `Name must be 1-${MAX_NAME_LENGTH} characters.`);
@@ -68,52 +95,105 @@ class RoomStore {
         throw new RoomError('NAME_TAKEN', `"${name}" is already taken in this room.`);
       }
     }
-    const player = { id: playerId, name, motion: 0, lastSeen: Date.now() };
-    room.players.set(playerId, player);
-    this.memberOf.set(playerId, code);
+    const player = {
+      id: this.generateToken('p_'),
+      key: this.generateToken('k_'),
+      name,
+      socketId,
+      connected: true,
+    };
+    room.players.set(player.id, player);
+    this.sockets.set(socketId, { code: room.code, role: 'player', id: player.id });
     return { room, player };
   }
 
-  // Records the latest motion reading. Returns the room, or null if the
-  // sender is not a player (e.g. a stale socket after leaving).
-  updateMotion(playerId, value) {
-    const room = this.roomOf(playerId);
-    const player = room?.players.get(playerId);
+  // A player's phone reconnected (or reloaded) with its rejoin key.
+  resumePlayer(socketId, rawCode, key) {
+    this.assertFree(socketId);
+    const room = this.findRoom(rawCode);
+    const player = typeof key === 'string'
+      ? [...room.players.values()].find((p) => p.key === key)
+      : undefined;
+    if (!player) {
+      throw new RoomError('UNKNOWN_PLAYER', 'You are no longer in this room.');
+    }
+    this.sockets.delete(player.socketId);
+    player.socketId = socketId;
+    player.connected = true;
+    this.sockets.set(socketId, { code: room.code, role: 'player', id: player.id });
+    return { room, player };
+  }
+
+  // A socket closed. Marks its host or player as disconnected (they can still
+  // resume) and returns { room, role, player } — or null if it was not in a room
+  // or had already been replaced by a newer socket.
+  disconnect(socketId) {
+    const entry = this.sockets.get(socketId);
+    if (!entry) return null;
+    this.sockets.delete(socketId);
+    const room = this.rooms.get(entry.code);
+    if (!room) return null;
+    if (entry.role === 'host') {
+      room.hostConnected = false;
+      return { room, role: 'host', player: null };
+    }
+    const player = room.players.get(entry.id);
     if (!player) return null;
+    player.connected = false;
+    return { room, role: 'player', player };
+  }
+
+  // Removes a player for good (they stayed away too long).
+  removePlayer(code, id) {
+    const room = this.rooms.get(code);
+    const player = room?.players.get(id);
+    if (!player) return false;
+    room.players.delete(id);
+    this.sockets.delete(player.socketId);
+    return true;
+  }
+
+  // Closes a room for good (its host stayed away too long).
+  closeRoom(code) {
+    const room = this.rooms.get(code);
+    if (!room) return;
+    this.sockets.delete(room.hostSocketId);
+    for (const p of room.players.values()) this.sockets.delete(p.socketId);
+    this.rooms.delete(code);
+  }
+
+  // Returns { room, player } for a connected player's socket, or null.
+  playerOf(socketId) {
+    const entry = this.sockets.get(socketId);
+    if (!entry || entry.role !== 'player') return null;
+    const room = this.rooms.get(entry.code);
+    const player = room?.players.get(entry.id);
+    return player ? { room, player } : null;
+  }
+
+  // Records a motion reading. Returns { room, player }, or null if the sender
+  // is not a player (e.g. a socket that was replaced by a reconnect).
+  updateMotion(socketId, value) {
+    const found = this.playerOf(socketId);
+    if (!found) return null;
     if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
       throw new RoomError('BAD_MOTION', 'Motion must be a non-negative number.');
     }
-    player.motion = value;
-    player.lastSeen = Date.now();
-    return room;
-  }
-
-  // Removes a socket from whatever room it is in.
-  // Returns { room, wasHost } or null if it was not in a room.
-  leave(socketId) {
-    const room = this.roomOf(socketId);
-    if (!room) return null;
-    this.memberOf.delete(socketId);
-    if (room.hostId === socketId) {
-      for (const playerId of room.players.keys()) this.memberOf.delete(playerId);
-      this.rooms.delete(room.code);
-      return { room, wasHost: true };
-    }
-    room.players.delete(socketId);
-    return { room, wasHost: false };
+    return found;
   }
 
   // Returns the room this socket hosts, or throws if it is not a host.
   hostedRoom(socketId) {
-    const room = this.roomOf(socketId);
-    if (!room || room.hostId !== socketId) {
+    const entry = this.sockets.get(socketId);
+    const room = entry?.role === 'host' ? this.rooms.get(entry.code) : undefined;
+    if (!room) {
       throw new RoomError('NOT_HOST', 'Only the host can do that.');
     }
     return room;
   }
 
-  setThreshold(hostId, value) {
-    const room = this.hostedRoom(hostId);
+  setThreshold(socketId, value) {
+    const room = this.hostedRoom(socketId);
     if (typeof value !== 'number' || !(value >= MIN_THRESHOLD && value <= MAX_THRESHOLD)) {
       throw new RoomError('BAD_THRESHOLD', `Sensitivity must be between ${MIN_THRESHOLD} and ${MAX_THRESHOLD}.`);
     }
@@ -121,14 +201,24 @@ class RoomStore {
     return room;
   }
 
-  roomOf(socketId) {
-    const code = this.memberOf.get(socketId);
-    return code ? this.rooms.get(code) : undefined;
+  assertFree(socketId) {
+    if (this.sockets.has(socketId)) {
+      throw new RoomError('ALREADY_IN_ROOM', 'This connection is already in a room.');
+    }
+  }
+
+  findRoom(rawCode) {
+    const code = String(rawCode ?? '').trim().toUpperCase();
+    const room = this.rooms.get(code);
+    if (!room) {
+      throw new RoomError('ROOM_NOT_FOUND', `No room with code "${code}".`);
+    }
+    return room;
   }
 }
 
 function publicPlayers(room) {
-  return [...room.players.values()].map(({ id, name }) => ({ id, name }));
+  return [...room.players.values()].map(({ id, name, connected }) => ({ id, name, connected }));
 }
 
 module.exports = {

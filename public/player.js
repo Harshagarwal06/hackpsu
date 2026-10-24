@@ -74,9 +74,10 @@ function startStreamingMotion() {
   }, SEND_INTERVAL_MS);
 }
 
-function joinRoom(code, name) {
+// Sends an event and resolves with the server's reply, or rejects with its error.
+function request(event, payload) {
   return new Promise((resolve, reject) => {
-    socket.emit('player:join', { code, name }, (res) => {
+    socket.emit(event, payload, (res) => {
       if (res.ok) resolve(res);
       else reject(new Error(res.error.message));
     });
@@ -129,6 +130,18 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && myId) keepScreenOn();
 });
 
+// --- Joining, rejoining, reconnecting --------------------------------------
+// This tab's place in a room (code, rejoin key, name). It survives reloads and
+// lost connections so the player comes back as themselves.
+const PLAYER_SESSION = 'sgpe-player';
+
+function savedPlayer() {
+  const raw = sessionStorage.getItem(PLAYER_SESSION);
+  return raw ? JSON.parse(raw) : null;
+}
+
+const JOIN_LABEL = 'Join & enable motion';
+
 // Opened from the host's QR code: the room code is in the link, so fill it in.
 const codeFromLink = new URLSearchParams(location.search).get('code');
 if (codeFromLink) {
@@ -136,10 +149,25 @@ if (codeFromLink) {
   $('name').focus();
 }
 
+// After a reload the phone needs a tap before motion works again (iPhone),
+// so a saved place becomes a "Rejoin" button instead of rejoining by itself.
+let pendingRejoin = savedPlayer();
+if (pendingRejoin && codeFromLink && codeFromLink.toUpperCase() !== pendingRejoin.code) {
+  // Scanned a different room's code: that's where they want to go.
+  sessionStorage.removeItem(PLAYER_SESSION);
+  pendingRejoin = null;
+}
+if (pendingRejoin) {
+  $('code').value = pendingRejoin.code;
+  $('name').value = pendingRejoin.name;
+  $('join-btn').textContent = 'Rejoin & enable motion';
+}
+
 // --- Screens ---------------------------------------------------------------
 let myId = null;
 let myStatus = 'playing';
 let inRound = false; // true while this player is taking part in a round
+let streaming = false;
 
 function showScreen(screen, word, hint) {
   document.body.dataset.screen = screen;
@@ -149,10 +177,65 @@ function showScreen(screen, word, hint) {
   $('game-hint').textContent = hint || '';
 }
 
+// Shows the room after a join, rejoin or reconnect. If a round is running,
+// the server replays its start right after this.
+function enterRoom(res) {
+  myId = res.id;
+  sessionStorage.setItem(PLAYER_SESSION, JSON.stringify({ code: res.code, key: res.key, name: res.name }));
+  $('me').textContent = res.name;
+  $('room').textContent = res.code;
+  $('lobby-status').textContent = res.roundRunning
+    ? 'A round is in progress. You will play the next one.'
+    : 'Waiting for the host to start.';
+  $('status-error').textContent = '';
+  // Round state from before a reconnect is out of date.
+  inRound = false;
+  inBridge = false;
+  bridgeChoosing = false;
+  myTeam = null;
+  towPhase = null;
+  $('join-view').classList.add('hidden');
+  $('motion-meter').classList.remove('hidden');
+  hideRoundWidgets();
+  showScreen('lobby');
+  if (res.game) applyGame(res.game);
+  if (!streaming) {
+    streaming = true;
+    startStreamingMotion();
+    // Permission can be granted on a phone that still sends no tilt readings.
+    setTimeout(() => {
+      if (gamma == null && !$('tilt-note').textContent) {
+        $('tilt-note').textContent = "Your phone isn't sending tilt readings, so you can't pick a side in Glass Bridge.";
+      }
+    }, 2000);
+  }
+}
+
+// Back to the join form (the room closed, or this player was dropped).
+function leaveRoom(message) {
+  sessionStorage.removeItem(PLAYER_SESSION);
+  myId = null;
+  inRound = false;
+  inBridge = false;
+  bridgeChoosing = false;
+  myTeam = null;
+  showScreen('lobby');
+  $('lobby-view').classList.add('hidden');
+  $('motion-meter').classList.add('hidden');
+  $('join-view').classList.remove('hidden');
+  $('join-btn').textContent = JOIN_LABEL;
+  $('join-btn').disabled = false;
+  $('join-error').textContent = message;
+  $('status-error').textContent = '';
+}
+
 $('join-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   $('join-error').textContent = '';
   $('join-btn').disabled = true;
+  const code = $('code').value.trim().toUpperCase();
+  const name = $('name').value.trim();
+  const rejoin = pendingRejoin && code === pendingRejoin.code && name === pendingRejoin.name ? pendingRejoin : null;
   try {
     unlockAudio();
     keepScreenOn();
@@ -160,29 +243,43 @@ $('join-form').addEventListener('submit', async (e) => {
     if (tilt !== 'granted') {
       $('tilt-note').textContent = `Tilt isn't available (${tilt}), so you can't pick a side in Glass Bridge.`;
     }
-    const res = await joinRoom($('code').value, $('name').value);
-    myId = res.id;
-    $('me').textContent = res.name;
-    $('room').textContent = res.code;
-    if (res.roundRunning) {
-      $('lobby-status').textContent = 'A round is in progress. You will play the next one.';
+    let res;
+    if (rejoin) {
+      try {
+        res = await request('player:resume', { code: rejoin.code, key: rejoin.key });
+      } catch (err) {
+        pendingRejoin = null;
+        sessionStorage.removeItem(PLAYER_SESSION);
+        $('join-btn').textContent = JOIN_LABEL;
+        throw new Error(`Couldn't rejoin: ${err.message} Tap Join to join as a new player.`);
+      }
+    } else {
+      res = await request('player:join', { code, name });
     }
-    $('join-view').classList.add('hidden');
-    $('motion-meter').classList.remove('hidden');
-    showScreen('lobby');
-    if (res.game) applyGame(res.game);
-    startStreamingMotion();
+    pendingRejoin = null;
+    enterRoom(res);
   } catch (err) {
     $('join-error').textContent = err.message;
     $('join-btn').disabled = false;
   }
 });
 
+// Runs after every reconnect. The page is still open, so motion permission is
+// still granted: rejoin automatically as the same player.
+socket.on('connect', () => {
+  const saved = savedPlayer();
+  if (!myId || !saved) return;
+  socket.emit('player:resume', { code: saved.code, key: saved.key }, (res) => {
+    if (res.ok) enterRoom(res);
+    else leaveRoom(`You were away too long (${res.error.message}) Join again to play.`);
+  });
+});
+
 socket.on('rl:start', ({ players: list }) => {
   if (!myId || !list.some((p) => p.id === myId)) return;
   inRound = true;
   myStatus = 'playing';
-  hideRoundWidgets();
+  startingRound();
   $('my-progress').style.width = '0%';
   $('progress-meter').classList.remove('hidden');
 });
@@ -194,6 +291,8 @@ socket.on('rl:phase', ({ phase }) => {
     tone(440, 660, 0.2, 'sine');
   } else {
     showScreen('red', 'RED LIGHT', 'FREEZE. Don\'t move.');
+    // Tell the server the moment RED is on screen: the grace period counts from here.
+    socket.emit('rl:seen-red');
     tone(220, 110, 0.4, 'sawtooth');
   }
 });
@@ -244,7 +343,7 @@ socket.on('tow:start', ({ teams }) => {
   inRound = true;
   myTeam = mine.team;
   towPhase = 'countdown';
-  hideRoundWidgets();
+  startingRound();
   $('my-rope').classList.remove('hidden');
   $('my-knot').style.left = '50%';
   showScreen(myTeam, 'GET READY', `You're on Team ${myTeam.toUpperCase()}. Shake when it says SHAKE!`);
@@ -300,7 +399,10 @@ function setPads(side, fraction) {
 // Runs every sample while it's this player's turn: send the lean, and jump
 // once a side has been held long enough.
 function bridgeTick() {
-  if (gamma == null) return;
+  if (gamma == null) {
+    $('game-hint').textContent = "Your phone isn't sending tilt readings, so you'll be pushed onto a random panel.";
+    return;
+  }
   socket.emit('gb:lean', Math.round(gamma));
   const side = gamma <= -TILT_DEG ? 'left' : gamma >= TILT_DEG ? 'right' : null;
   const now = Date.now();
@@ -324,11 +426,18 @@ function hideRoundWidgets() {
   $('jump-pads').classList.add('hidden');
 }
 
+// A round this player is in is starting: clear the last round's widgets and
+// any error left over from it.
+function startingRound() {
+  hideRoundWidgets();
+  $('status-error').textContent = '';
+}
+
 socket.on('gb:start', ({ order }) => {
   if (!myId || !order.some((p) => p.id === myId)) return;
   inRound = true;
   inBridge = true;
-  hideRoundWidgets();
+  startingRound();
   showScreen('bridge', 'GLASS BRIDGE', 'Take turns crossing. Watch the big screen.');
 });
 
@@ -353,6 +462,10 @@ socket.on('gb:state', ({ phase, current, position, steps, players: list }) => {
   } else {
     bridgeChoosing = false;
     $('jump-pads').classList.add('hidden');
+    // Rejoined after falling: the jump that eliminated them was missed.
+    if (me.status === 'eliminated' && document.body.dataset.screen === 'bridge') {
+      showScreen('eliminated', 'ELIMINATED', 'You fell. Watch the big screen.');
+    }
   }
 });
 
@@ -431,7 +544,7 @@ function applyGame(game) {
 socket.on('game:state', applyGame);
 
 socket.on('room:closed', () => {
-  $('status-error').textContent = 'The host closed the room. Reload to join a new one.';
+  leaveRoom('The host closed the room. Scan the new code to join again.');
 });
 
 socket.on('server:error', (error) => {
@@ -439,5 +552,5 @@ socket.on('server:error', (error) => {
 });
 
 socket.on('disconnect', () => {
-  $('status-error').textContent = 'Lost connection to the server. Reload to rejoin.';
+  if (myId) $('status-error').textContent = 'Lost connection. Reconnecting…';
 });

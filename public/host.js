@@ -1,5 +1,5 @@
 // Host screen (laptop on the projector): creates a room, shows players live,
-// and runs Red Light, Green Light.
+// and runs the rounds and the game.
 
 const METER_MAX = 15; // keep in sync with player.js
 
@@ -18,20 +18,62 @@ function showError(err) {
   $('host-error').textContent = err ? err.message : '';
 }
 
-socket.emit('host:create', (res) => {
-  if (!res.ok) return showError(res.error);
+// This tab's room, kept across reloads and reconnects so the host can resume it.
+const HOST_SESSION = 'sgpe-host';
+
+function savedHost() {
+  const raw = sessionStorage.getItem(HOST_SESSION);
+  return raw ? JSON.parse(raw) : null;
+}
+
+function showRoom(res) {
+  sessionStorage.setItem(HOST_SESSION, JSON.stringify({ code: res.code, key: res.key }));
   $('room-code').textContent = res.code;
   // The QR opens the phone page with this room's code filled in.
   const joinLink = `${location.origin}/?code=${res.code}`;
   $('qr').src = `/qr.svg?url=${encodeURIComponent(joinLink)}`;
-  $('qr').addEventListener('error', () => showError({ message: 'Could not load the QR code. Players can still join with the link and code.' }));
+  $('qr').onerror = () => showError({ message: 'Could not load the QR code. Players can still join with the link and code.' });
   $('qr-box').classList.remove('hidden');
   const slider = $('threshold');
   slider.min = res.minThreshold;
   slider.max = res.maxThreshold;
   setThreshold(res.threshold);
   slider.disabled = false;
+  // Rounds that were running replay their start right after this; anything
+  // that ended while we were away is cleared here.
+  roundRunning = false;
+  $('phase-banner').classList.add('hidden');
+  showRoundView(null);
   updateButtons();
+}
+
+function createRoom() {
+  players = [];
+  game = null;
+  renderPlayers();
+  socket.emit('host:create', (res) => {
+    if (!res.ok) return showError(res.error);
+    showRoom(res);
+  });
+}
+
+// Runs on the first connection and after every reconnect.
+socket.on('connect', () => {
+  const saved = savedHost();
+  if (!saved) {
+    createRoom();
+    return;
+  }
+  socket.emit('host:resume', saved, (res) => {
+    if (res.ok) {
+      showError(null);
+      showRoom(res);
+      return;
+    }
+    sessionStorage.removeItem(HOST_SESSION);
+    showError({ message: `Couldn't reconnect to room ${saved.code} (${res.error.message}). Started a new room.` });
+    createRoom();
+  });
 });
 
 function setThreshold(value) {
@@ -96,6 +138,15 @@ let game = null; // last game:state, or null when there is no game
 let gameOut = new Map(); // id -> round they went out in
 let gameWinners = new Set();
 
+// Called when any round starts. A practice round after a finished game is not
+// part of it, so the game's Winner / Out labels and winner panel go away.
+function roundStarting() {
+  if (game && game.phase !== 'over') return;
+  gameOut = new Map();
+  gameWinners = new Set();
+  $('winner-view').classList.add('hidden');
+}
+
 socket.on('game:state', (state) => {
   game = state;
   gameOut = new Map((state?.out || []).map((o) => [o.id, o.round]));
@@ -149,7 +200,7 @@ function renderPlayers() {
       <div class="card-top"><span class="name"></span><span class="status"></span></div>
       <div class="meter motion"><div></div><span class="marker"></span></div>
       <div class="meter progress"><div></div></div>`;
-    card.querySelector('.name').textContent = p.name;
+    card.querySelector('.name').textContent = p.connected ? p.name : `${p.name} · away`;
     list.append(card);
     cards.set(p.id, {
       card,
@@ -215,6 +266,7 @@ socket.on('player:motion', ({ id, m }) => {
 });
 
 socket.on('rl:start', ({ players: inRound }) => {
+  roundStarting();
   roundRunning = true;
   roundState.clear();
   for (const p of inRound) roundState.set(p.id, { status: 'playing', progress: 0 });
@@ -257,6 +309,7 @@ socket.on('rl:over', ({ reason, results }) => {
 // --- Tug of War ------------------------------------------------------------
 
 socket.on('tow:start', ({ teams }) => {
+  roundStarting();
   roundRunning = true;
   updateButtons();
   roundState.clear();
@@ -354,6 +407,7 @@ function updateCountdown() {
 }
 
 socket.on('gb:start', ({ order }) => {
+  roundStarting();
   roundRunning = true;
   updateButtons();
   roundState.clear();
@@ -420,5 +474,5 @@ socket.on('gb:over', ({ reason, results }) => {
 });
 
 socket.on('disconnect', () => {
-  showError({ message: 'Lost connection to the server. Reload to start a new room (players must rejoin).' });
+  showError({ message: 'Lost connection to the server. Reconnecting to the same room…' });
 });

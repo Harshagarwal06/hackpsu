@@ -91,6 +91,7 @@ test('moving during red is allowed during the grace period, then eliminates', (t
   const { round, events, tick } = setup(t);
   round.start();
   tick(1000); // red starts
+  round.seenRed('a'); // phone shows red straight away
   tick(200);
   round.handleMotion('a', 5); // inside grace
   assert.equal(events.filter((e) => e[0] === 'player').length, 0);
@@ -99,10 +100,52 @@ test('moving during red is allowed during the grace period, then eliminates', (t
   assert.deepEqual(events.at(-1), ['player', 'a', 'eliminated', 0]);
 });
 
+test('the grace period counts from when each phone shows red', (t) => {
+  const { round, events, tick } = setup(t);
+  round.start();
+  tick(1000); // red starts on the server
+  round.seenRed('a');
+  tick(250); // Ben's phone is slow: it shows red 250 ms later
+  round.seenRed('b');
+  tick(100); // 350 ms after red: Ann's grace is over, Ben's is not
+  round.handleMotion('a', 5);
+  round.handleMotion('b', 5);
+  assert.deepEqual(events.filter((e) => e[0] === 'player').map((e) => [e[1], e[2]]), [['a', 'eliminated']]);
+  tick(200); // 300 ms after Ben's phone showed red
+  round.handleMotion('b', 5);
+  assert.deepEqual(events.filter((e) => e[0] === 'player').map((e) => [e[1], e[2]]), [['a', 'eliminated'], ['b', 'eliminated']]);
+});
+
+test('a phone that never confirms red gets its grace from the 1 second cap', (t) => {
+  const { round, events, tick } = setup(t, { options: { redMs: 3000 } });
+  round.start();
+  tick(1000); // red starts; Ann's phone never says it saw it
+  tick(1200); // 1000 ms cap + 200 ms: still inside the 300 ms grace
+  round.handleMotion('a', 5);
+  assert.equal(events.filter((e) => e[0] === 'player').length, 0);
+  tick(100);
+  round.handleMotion('a', 5);
+  assert.deepEqual(events.at(-1), ['player', 'a', 'eliminated', 0]);
+});
+
+test('seeing red only counts during red, once per light', (t) => {
+  const { round, tick } = setup(t);
+  round.start();
+  round.seenRed('a'); // green: ignored
+  tick(1000); // red
+  assert.equal(round.players.get('a').redSeenAt, null);
+  round.seenRed('a');
+  const first = round.players.get('a').redSeenAt;
+  tick(50);
+  round.seenRed('a');
+  assert.equal(round.players.get('a').redSeenAt, first);
+});
+
 test('round ends early once nobody is still playing', (t) => {
   const { round, events, tick } = setup(t, { players: [['a', 'Ann']] });
   round.start();
   tick(1000); // red
+  round.seenRed('a');
   tick(300); // grace over
   round.handleMotion('a', 5);
   const over = events.find((e) => e[0] === 'over')[1];

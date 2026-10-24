@@ -14,7 +14,7 @@ function emitWithAck(socket, event, ...args) {
 }
 
 test('host + player socket flow', async (t) => {
-  const { httpServer, io } = createGameServer();
+  const { httpServer, io } = createGameServer({ reconnectMs: 50 });
   await new Promise((resolve) => httpServer.listen(0, resolve));
   const url = `http://localhost:${httpServer.address().port}`;
   const host = connect(url);
@@ -46,9 +46,167 @@ test('host + player socket flow', async (t) => {
   player.emit('player:motion', -5);
   assert.equal((await motionError).code, 'BAD_MOTION');
 
+  // The host doesn't come back within the reconnect window: the room closes.
   const closed = once(player, 'room:closed');
   host.close();
   await closed;
+});
+
+test('a player who drops out comes back as themselves, mid-round', async (t) => {
+  const { httpServer, io } = createGameServer({
+    roundOptions: { cycles: 1, greenMinMs: 5000, greenMaxMs: 5000 },
+  });
+  await new Promise((resolve) => httpServer.listen(0, resolve));
+  const url = `http://localhost:${httpServer.address().port}`;
+  const host = connect(url);
+  const p1 = connect(url);
+  const p2 = connect(url);
+  t.after(() => {
+    for (const s of [host, p1, p2]) s.close();
+    io.close();
+  });
+
+  const { code } = await emitWithAck(host, 'host:create');
+  const ann = await emitWithAck(p1, 'player:join', { code, name: 'Ann' });
+  await emitWithAck(p2, 'player:join', { code, name: 'Ben' });
+  await emitWithAck(host, 'host:start-redlight');
+
+  // Ann's phone loses its connection: the host sees her as away, not gone.
+  const away = once(host, 'room:players');
+  p1.disconnect();
+  assert.deepEqual((await away).map((p) => [p.name, p.connected]), [['Ann', false], ['Ben', true]]);
+
+  // She comes back on a new socket with her key: same id, round replayed.
+  const p1b = connect(url);
+  t.after(() => p1b.close());
+  const start = once(p1b, 'rl:start');
+  const phase = once(p1b, 'rl:phase');
+  const back = await emitWithAck(p1b, 'player:resume', { code, key: ann.key });
+  assert.equal(back.ok, true);
+  assert.equal(back.id, ann.id);
+  assert.equal(back.roundRunning, true);
+  assert.deepEqual((await start).players.map((p) => p.name), ['Ann', 'Ben']);
+  assert.equal((await phase).phase, 'green');
+
+  // Her motion counts as hers again.
+  const motion = once(host, 'player:motion');
+  p1b.emit('player:motion', 1);
+  assert.equal((await motion).id, ann.id);
+
+  const stranger = connect(url);
+  t.after(() => stranger.close());
+  const wrongKey = await emitWithAck(stranger, 'player:resume', { code, key: 'k_nope' });
+  assert.equal(wrongKey.error.code, 'UNKNOWN_PLAYER');
+});
+
+test('a player who stays away too long is dropped from the room and the game', async (t) => {
+  const { httpServer, io } = createGameServer({
+    reconnectMs: 50,
+    roundOptions: { greenMinMs: 5000, greenMaxMs: 5000 },
+  });
+  await new Promise((resolve) => httpServer.listen(0, resolve));
+  const url = `http://localhost:${httpServer.address().port}`;
+  const host = connect(url);
+  const p1 = connect(url);
+  const p2 = connect(url);
+  const p3 = connect(url);
+  t.after(() => {
+    for (const s of [host, p1, p2, p3]) s.close();
+    io.close();
+  });
+
+  const { code } = await emitWithAck(host, 'host:create');
+  const ann = await emitWithAck(p1, 'player:join', { code, name: 'Ann' });
+  await emitWithAck(p2, 'player:join', { code, name: 'Ben' });
+  await emitWithAck(p3, 'player:join', { code, name: 'Cal' });
+  await emitWithAck(host, 'host:game-start');
+
+  const gameUpdate = once(host, 'game:state');
+  p1.disconnect();
+  const state = await gameUpdate; // sent once the 50 ms window runs out
+  assert.deepEqual(state.alive.map((p) => p.name), ['Ben', 'Cal']);
+  const p1b = connect(url);
+  t.after(() => p1b.close());
+  const late = await emitWithAck(p1b, 'player:resume', { code, key: ann.key });
+  assert.equal(late.error.code, 'UNKNOWN_PLAYER');
+});
+
+test('the host reconnects to the same room and sees the game it left', async (t) => {
+  const { httpServer, io } = createGameServer({
+    roundOptions: { greenMinMs: 5000, greenMaxMs: 5000 },
+  });
+  await new Promise((resolve) => httpServer.listen(0, resolve));
+  const url = `http://localhost:${httpServer.address().port}`;
+  const host = connect(url);
+  const p1 = connect(url);
+  const p2 = connect(url);
+  t.after(() => {
+    for (const s of [host, p1, p2]) s.close();
+    io.close();
+  });
+
+  const created = await emitWithAck(host, 'host:create');
+  await emitWithAck(p1, 'player:join', { code: created.code, name: 'Ann' });
+  await emitWithAck(p2, 'player:join', { code: created.code, name: 'Ben' });
+  await emitWithAck(host, 'host:game-start');
+
+  let closed = false;
+  p1.on('room:closed', () => { closed = true; });
+  host.disconnect();
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(closed, false);
+
+  const host2 = connect(url);
+  t.after(() => host2.close());
+  const players = once(host2, 'room:players');
+  const game = once(host2, 'game:state');
+  const start = once(host2, 'rl:start');
+  const bad = await emitWithAck(host2, 'host:resume', { code: created.code, key: 'h_nope' });
+  assert.equal(bad.error.code, 'BAD_KEY');
+  const back = await emitWithAck(host2, 'host:resume', { code: created.code, key: created.key });
+  assert.equal(back.ok, true);
+  assert.equal(back.code, created.code);
+  assert.equal((await players).length, 2);
+  assert.equal((await game).phase, 'playing');
+  assert.equal((await start).players.length, 2);
+  // Host controls work again from the new connection.
+  assert.equal((await emitWithAck(host2, 'host:end-round')).ok, true);
+});
+
+test('a finished game is not re-sent when a player leaves afterwards', async (t) => {
+  const { httpServer, io } = createGameServer({
+    reconnectMs: 30,
+    roundOptions: { cycles: 1, greenMinMs: 5000, greenMaxMs: 5000 },
+  });
+  await new Promise((resolve) => httpServer.listen(0, resolve));
+  const url = `http://localhost:${httpServer.address().port}`;
+  const host = connect(url);
+  const p1 = connect(url);
+  const p2 = connect(url);
+  t.after(() => {
+    for (const s of [host, p1, p2]) s.close();
+    io.close();
+  });
+
+  const { code } = await emitWithAck(host, 'host:create');
+  await emitWithAck(p1, 'player:join', { code, name: 'Ann' });
+  await emitWithAck(p2, 'player:join', { code, name: 'Ben' });
+  await emitWithAck(host, 'host:game-start');
+  // Ending each round keeps everyone in, so the game runs to the end.
+  for (let i = 0; i < 3; i++) {
+    const next = once(host, 'game:state');
+    await emitWithAck(host, 'host:end-round');
+    const s = await next;
+    if (s.phase === 'intermission') await emitWithAck(host, 'host:game-next');
+  }
+
+  let resent = 0;
+  host.on('game:state', () => { resent++; });
+  const dropped = once(host, 'room:players');
+  p1.disconnect();
+  await dropped;
+  await new Promise((resolve) => setTimeout(resolve, 100)); // past the 30 ms window
+  assert.equal(resent, 0);
 });
 
 test('Red Light, Green Light over sockets', async (t) => {
@@ -83,10 +241,11 @@ test('Red Light, Green Light over sockets', async (t) => {
   const again = await emitWithAck(host, 'host:start-redlight');
   assert.equal(again.error.code, 'ROUND_RUNNING');
 
-  // Wait for red, then Ann moves.
+  // Wait for red, Ann's phone says it shows red, then Ann moves.
   await new Promise((resolve) => {
     p1.on('rl:phase', (info) => { if (info.phase === 'red') resolve(); });
   });
+  p1.emit('rl:seen-red');
   const hostSeesOut = once(host, 'rl:player');
   const annSeesOut = once(p1, 'rl:player');
   p1.emit('player:motion', 9);
@@ -229,6 +388,7 @@ test('a full game: survivors carry over and the game ends with a winner', async 
   await new Promise((resolve) => {
     p1.on('rl:phase', (info) => { if (info.phase === 'red') resolve(); });
   });
+  p1.emit('rl:seen-red');
   const annOut = once(p1, 'rl:player');
   p1.emit('player:motion', 9);
   await annOut;
