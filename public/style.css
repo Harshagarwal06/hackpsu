@@ -230,6 +230,37 @@ button.secondary { background: #333; }
 .buttons.practice .muted { font-size: 0.85rem; }
 button.big { font-size: 1.15rem; padding: 1rem 1.6rem; }
 
+/* Announcer controls + subtitles (host) */
+.announcer-row select {
+  font: inherit;
+  font-size: 0.9rem;
+  max-width: 280px;
+  padding: 0.45rem 0.6rem;
+  border-radius: 10px;
+  border: 1px solid #333;
+  background: var(--panel);
+  color: var(--text);
+}
+.announcer-row button { padding: 0.5rem 0.8rem; font-size: 0.9rem; }
+.announcer-row .muted { font-size: 0.85rem; }
+
+.subtitle {
+  position: fixed;
+  left: 50%;
+  bottom: 32px;
+  transform: translateX(-50%);
+  max-width: min(90vw, 1100px);
+  padding: 14px 28px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.82);
+  text-align: center;
+  z-index: 10;
+  pointer-events: none;
+}
+.subtitle-ko { font-size: clamp(1.4rem, 3.5vw, 2.6rem); font-weight: 800; color: white; }
+.subtitle-ko:empty { display: none; }
+.subtitle-en { font-size: clamp(1.1rem, 2.6vw, 1.9rem); font-weight: 700; color: #ffd166; }
+
 /* Game progress + winner (host) */
 .game-panel { background: var(--panel); border-radius: 12px; padding: 12px 16px; margin-bottom: 1rem; }
 .game-status { font-size: 1.3rem; font-weight: 800; }

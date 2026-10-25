@@ -38,7 +38,13 @@
           <button id="next-btn" class="big hidden"></button>
           <button id="end-btn" class="secondary hidden">End round</button>
           <button id="endgame-btn" class="secondary hidden">End game</button>
+        </div>
+        <div class="buttons announcer-row">
           <button id="announcer-btn" class="secondary" type="button"></button>
+          <label class="muted" for="voice-select">Voice</label>
+          <select id="voice-select"></select>
+          <button id="voice-test" class="secondary" type="button">Test voice</button>
+          <span class="muted" id="voice-note"></span>
         </div>
         <div class="buttons practice">
           <span class="muted">Practice (everyone plays, nothing counts):</span>
@@ -118,6 +124,11 @@
     <p class="error" id="host-error"></p>
     <section class="players" id="players"></section>
   </main>
+
+  <div class="subtitle hidden" id="subtitle" aria-live="polite">
+    <div class="subtitle-ko" id="subtitle-ko" lang="ko"></div>
+    <div class="subtitle-en" id="subtitle-en"></div>
+  </div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="/host.js"></script>

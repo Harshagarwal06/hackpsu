@@ -197,40 +197,145 @@ function chaChing() {
 }
 
 // --- Announcer (big screen voice) ---
-// Uses the browser's built-in speech. Like other sound, it only works after
-// the host's first click (Start Game counts).
+// Calm, slow, formal delivery in the style of the show, using the voices
+// already on this computer. A Korean voice speaks Korean lines with English
+// subtitles; any other voice speaks the English lines. Like other sound, it
+// only works after the host's first click (Start Game or Test voice counts).
 const speech = 'speechSynthesis' in window ? window.speechSynthesis : null;
+const VOICE_KEY = 'sgpe-voice';
+const RATE = 0.85;
+const PITCH = 0.9;
 let announcerOn = Boolean(speech);
+let voices = [];
+let voice = null;
+let voiceMemoryNote = ''; // set if this browser can't remember the choice
+
+const isKorean = (v) => Boolean(v && v.lang.toLowerCase().startsWith('ko'));
 
 function showAnnouncerButton() {
   const btn = $('announcer-btn');
   btn.disabled = !speech;
   btn.textContent = !speech ? 'Announcer: not supported here' : `Announcer: ${announcerOn ? 'on' : 'off'}`;
+  $('voice-select').disabled = !speech;
+  $('voice-test').disabled = !speech;
 }
+
+function showVoiceNote() {
+  let note;
+  if (!speech) note = '';
+  else if (!voices.length) note = 'No voices found in this browser.';
+  else if (isKorean(voice)) note = 'Korean lines, English subtitles.';
+  else if (voices.some(isKorean)) note = 'English lines.';
+  else note = 'English lines (no Korean voice on this computer).';
+  $('voice-note').textContent = `${note} ${voiceMemoryNote}`.trim();
+}
+
+// Fills the voice list, Korean voices first, and picks the saved voice,
+// else the first Korean one, else the browser's default.
+function loadVoices() {
+  if (!speech) return;
+  voices = speech.getVoices().slice().sort(
+    (a, b) => Number(isKorean(b)) - Number(isKorean(a)) || a.name.localeCompare(b.name),
+  );
+  const select = $('voice-select');
+  select.replaceChildren();
+  for (const v of voices) {
+    const opt = document.createElement('option');
+    opt.value = v.voiceURI;
+    opt.textContent = `${v.name} (${v.lang})`;
+    select.append(opt);
+  }
+  let saved = null;
+  try {
+    saved = localStorage.getItem(VOICE_KEY);
+  } catch (err) {
+    voiceMemoryNote = `This browser can't remember the choice (${err.message}).`;
+  }
+  voice = voices.find((v) => v.voiceURI === saved) || voices.find(isKorean) || voices.find((v) => v.default) || voices[0] || null;
+  if (voice) select.value = voice.voiceURI;
+  showVoiceNote();
+}
+
 showAnnouncerButton();
+if (speech) {
+  loadVoices();
+  // Chrome loads its voice list after the page; Safari has it right away.
+  speech.addEventListener('voiceschanged', loadVoices);
+}
+
 $('announcer-btn').addEventListener('click', () => {
   announcerOn = !announcerOn;
   if (!announcerOn) speech.cancel();
   showAnnouncerButton();
 });
 
+$('voice-select').addEventListener('change', (e) => {
+  voice = voices.find((v) => v.voiceURI === e.target.value) || null;
+  try {
+    localStorage.setItem(VOICE_KEY, e.target.value);
+  } catch (err) {
+    voiceMemoryNote = `This browser can't remember the choice (${err.message}).`;
+  }
+  showVoiceNote();
+});
+
+$('voice-test').addEventListener('click', () => {
+  speak({ ko: '무궁화 꽃이 피었습니다', en: 'Green light.', sub: 'Green light. (The mugunghwa flower has bloomed.)' }, true);
+  speak({ ko: '77번, 탈락.', en: 'Player zero seven seven, eliminated.', sub: 'Player 077: eliminated.' }, false);
+});
+
+// Big subtitles at the bottom of the projector for every line spoken.
+let subtitleTimer = null;
+function showSubtitle(ko, en) {
+  $('subtitle-ko').textContent = ko;
+  $('subtitle-en').textContent = en;
+  $('subtitle').classList.remove('hidden');
+  clearTimeout(subtitleTimer);
+  subtitleTimer = setTimeout(() => $('subtitle').classList.add('hidden'), 4500);
+}
+
+// line: { ko, en, sub? } — sub is the English subtitle (defaults to en).
 // urgent: cut off whatever is still being said (light changes must be on time).
-function say(text, { urgent = false } = {}) {
-  if (!announcerOn) return;
+function speak(line, urgent) {
+  const korean = isKorean(voice);
   if (urgent) speech.cancel();
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = 'en-US';
-  u.rate = 1;
-  u.pitch = 0.8;
+  const u = new SpeechSynthesisUtterance(korean ? line.ko : line.en);
+  if (voice) {
+    u.voice = voice;
+    u.lang = voice.lang;
+  } else {
+    u.lang = 'en-US';
+  }
+  u.rate = RATE;
+  u.pitch = PITCH;
   speech.speak(u);
+  showSubtitle(korean ? line.ko : '', line.sub || line.en);
+}
+
+function announce(line, { urgent = false } = {}) {
+  if (!announcerOn) return;
+  speak(line, urgent);
 }
 
 const joinList = (items) => (items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`);
+const playerOf = (id) => players.find((q) => q.id === id);
 
-// "Player zero six seven": said digit by digit, like the show.
-function playerCall(id) {
-  const p = players.find((q) => q.id === id);
+// "77번" — how a number is read out in Korean.
+function koCall(id) {
+  const p = playerOf(id);
+  return p ? `${p.number}번` : '참가자';
+}
+
+// "Player zero six seven": said digit by digit.
+function enCall(id) {
+  const p = playerOf(id);
   return p ? `Player ${String(p.number).padStart(3, '0').split('').join(' ')}` : 'A player';
+}
+
+// "Player 067 (Ann)" for subtitles.
+function subCall(id) {
+  const p = playerOf(id);
+  return p ? `Player ${pad(p.number)} (${p.name})` : 'A player';
 }
 
 // Eliminations that land together (e.g. time running out) are announced together.
@@ -240,12 +345,20 @@ function announceOut(id) {
   pendingOut.push(id);
   clearTimeout(pendingOutTimer);
   pendingOutTimer = setTimeout(() => {
-    say(`${joinList(pendingOut.map(playerCall))}, eliminated.`);
+    announce({
+      ko: `${pendingOut.map(koCall).join(', ')}, 탈락.`,
+      en: `${joinList(pendingOut.map(enCall))}, eliminated.`,
+      sub: `${joinList(pendingOut.map(subCall))}: eliminated.`,
+    });
     pendingOut = [];
   }, 300);
 }
 
 const millions = (amount) => `${(amount / 1_000_000).toLocaleString('en-US')} million won`;
+// 200,000,000 → "2억 원"; amounts that aren't whole 억 are read as plain numbers.
+const koWon = (amount) => (amount % 100_000_000 === 0
+  ? `${amount / 100_000_000}억 원`
+  : `${amount.toLocaleString('ko-KR')}원`);
 
 function showPot(pot) {
   $('pot-amount').textContent = won(pot);
@@ -297,13 +410,18 @@ function roundStarting() {
 socket.on('game:state', (state) => {
   if (state?.phase === 'over' && game?.phase !== 'over') {
     // The game just ended: announce the winners and their prize.
-    const calls = state.winners.map((w) => playerCall(w.id));
-    if (calls.length) {
-      const share = Math.floor(state.pot / calls.length);
-      const prize = state.pot ? ` Prize: ${millions(share)}${calls.length > 1 ? ' each' : ''}.` : '';
-      say(`${joinList(calls)} ${calls.length > 1 ? 'win' : 'wins'}!${prize}`);
+    const ids = state.winners.map((w) => w.id);
+    if (ids.length) {
+      const share = Math.floor(state.pot / ids.length);
+      const each = ids.length > 1 ? ' each' : '';
+      const verb = ids.length > 1 ? 'win' : 'wins';
+      announce({
+        ko: `${ids.map(koCall).join(', ')}, 우승.${state.pot ? ` 상금 ${koWon(share)}.` : ''}`,
+        en: `${joinList(ids.map(enCall))} ${verb}.${state.pot ? ` Prize: ${millions(share)}${each}.` : ''}`,
+        sub: `${joinList(ids.map(subCall))} ${verb}.${state.pot ? ` Prize: ${won(share)}${each}.` : ''}`,
+      });
     } else {
-      say('Game over. Nobody won.');
+      announce({ ko: '게임 종료. 우승자 없음.', en: 'Game over. Nobody won.' });
     }
   }
   game = state;
@@ -464,7 +582,9 @@ socket.on('rl:phase', ({ phase, cycle, cycles }) => {
   banner.dataset.phase = phase;
   $('phase-text').textContent = phase === 'green' ? 'GREEN LIGHT' : 'RED LIGHT';
   $('phase-cycle').textContent = `Light ${cycle} of ${cycles}`;
-  say(phase === 'green' ? 'Green light.' : 'Red light!', { urgent: true });
+  announce(phase === 'green'
+    ? { ko: '무궁화 꽃이 피었습니다', en: 'Green light.', sub: 'Green light. (The mugunghwa flower has bloomed.)' }
+    : { ko: '멈추세요.', en: 'Red light. Stop.', sub: 'Red light! Stop.' }, { urgent: true });
 });
 
 socket.on('rl:player', ({ id, status, progress }) => {
@@ -507,7 +627,7 @@ socket.on('tow:start', ({ teams }) => {
   $('knot').style.left = '50%';
   showRoundView('tow-view');
   towPulling = false;
-  say('Tug of war. Get ready.', { urgent: true });
+  announce({ ko: '줄다리기. 준비하세요.', en: 'Tug of war. Get ready.' }, { urgent: true });
 });
 
 let towPulling = false; // whether "Pull!" has been announced this round
@@ -515,7 +635,7 @@ let towPulling = false; // whether "Pull!" has been announced this round
 socket.on('tow:state', ({ phase, rope, force, msLeft }) => {
   if (phase === 'pull' && !towPulling) {
     towPulling = true;
-    say('Pull!', { urgent: true });
+    announce({ ko: '당기세요!', en: 'Pull!' }, { urgent: true });
   }
   // rope: +1 = Pink wins (left), -1 = Teal wins (right).
   $('knot').style.left = `${50 - rope * 50}%`;
@@ -535,7 +655,11 @@ socket.on('tow:over', ({ reason, winner, results }) => {
   $('tow-view').dataset.winner = winner || '';
   $('tow-big').textContent = winner ? `${winner.toUpperCase()} WINS` : 'NO WINNER';
   $('tow-timer').textContent = '';
-  if (reason !== 'host') say(winner ? `Team ${winner === 'pink' ? 'Pink' : 'Teal'} wins!` : 'No winner.');
+  if (reason !== 'host') {
+    announce(winner
+      ? { ko: `${winner === 'pink' ? '핑크' : '청록'} 팀 승리.`, en: `Team ${winner === 'pink' ? 'Pink' : 'Teal'} wins.` }
+      : { ko: '승자 없음.', en: 'No winner.' });
+  }
   const heading = {
     pulled: `${winner?.toUpperCase()} pulled it across!`,
     time: winner ? `Time! ${winner.toUpperCase()} was ahead` : 'Time! Dead even',
@@ -613,7 +737,7 @@ socket.on('gb:start', ({ order }) => {
   clearInterval(gbCountdown);
   gbCountdown = setInterval(updateCountdown, 250);
   gbTurnCalled = null;
-  say('Glass bridge.', { urgent: true });
+  announce({ ko: '징검다리 건너기.', en: 'Glass bridge.' }, { urgent: true });
 });
 
 let gbTurnCalled = null; // player whose turn was last announced
@@ -631,7 +755,11 @@ socket.on('gb:state', (state) => {
     if (state.current !== previousCurrent) setNeedle(0);
     if (state.current !== gbTurnCalled) {
       gbTurnCalled = state.current;
-      say(`${playerCall(state.current)}, your turn.`);
+      announce({
+        ko: `${koCall(state.current)}, 차례입니다.`,
+        en: `${enCall(state.current)}, your turn.`,
+        sub: `${subCall(state.current)}, your turn.`,
+      });
     }
     updateCountdown();
   }
@@ -649,7 +777,10 @@ socket.on('gb:jump', (jump) => {
   $('gb-big').textContent = jump.correct ? 'SAFE!' : 'CRASH!';
   const how = jump.forced ? `${jump.name} froze and was pushed ${jump.side}` : `${jump.name} jumped ${jump.side}`;
   $('gb-sub').textContent = jump.correct ? `${how}. Tempered glass!` : `${how}. The glass shattered.`;
-  say(jump.correct ? 'Safe.' : `${playerCall(jump.id)}, eliminated.`, { urgent: true });
+  announce(jump.correct
+    ? { ko: '통과.', en: 'Safe.' }
+    : { ko: `${koCall(jump.id)}, 탈락.`, en: `${enCall(jump.id)}, eliminated.`, sub: `${subCall(jump.id)}: eliminated.` },
+  { urgent: true });
 });
 
 socket.on('gb:over', ({ reason, results }) => {
