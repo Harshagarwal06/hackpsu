@@ -196,6 +196,57 @@ function chaChing() {
   }
 }
 
+// --- Announcer (big screen voice) ---
+// Uses the browser's built-in speech. Like other sound, it only works after
+// the host's first click (Start Game counts).
+const speech = 'speechSynthesis' in window ? window.speechSynthesis : null;
+let announcerOn = Boolean(speech);
+
+function showAnnouncerButton() {
+  const btn = $('announcer-btn');
+  btn.disabled = !speech;
+  btn.textContent = !speech ? 'Announcer: not supported here' : `Announcer: ${announcerOn ? 'on' : 'off'}`;
+}
+showAnnouncerButton();
+$('announcer-btn').addEventListener('click', () => {
+  announcerOn = !announcerOn;
+  if (!announcerOn) speech.cancel();
+  showAnnouncerButton();
+});
+
+// urgent: cut off whatever is still being said (light changes must be on time).
+function say(text, { urgent = false } = {}) {
+  if (!announcerOn) return;
+  if (urgent) speech.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = 'en-US';
+  u.rate = 1;
+  u.pitch = 0.8;
+  speech.speak(u);
+}
+
+const joinList = (items) => (items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`);
+
+// "Player zero six seven": said digit by digit, like the show.
+function playerCall(id) {
+  const p = players.find((q) => q.id === id);
+  return p ? `Player ${String(p.number).padStart(3, '0').split('').join(' ')}` : 'A player';
+}
+
+// Eliminations that land together (e.g. time running out) are announced together.
+let pendingOut = [];
+let pendingOutTimer = null;
+function announceOut(id) {
+  pendingOut.push(id);
+  clearTimeout(pendingOutTimer);
+  pendingOutTimer = setTimeout(() => {
+    say(`${joinList(pendingOut.map(playerCall))}, eliminated.`);
+    pendingOut = [];
+  }, 300);
+}
+
+const millions = (amount) => `${(amount / 1_000_000).toLocaleString('en-US')} million won`;
+
 function showPot(pot) {
   $('pot-amount').textContent = won(pot);
   if (shownPot !== null && pot > shownPot) {
@@ -244,6 +295,17 @@ function roundStarting() {
 }
 
 socket.on('game:state', (state) => {
+  if (state?.phase === 'over' && game?.phase !== 'over') {
+    // The game just ended: announce the winners and their prize.
+    const calls = state.winners.map((w) => playerCall(w.id));
+    if (calls.length) {
+      const share = Math.floor(state.pot / calls.length);
+      const prize = state.pot ? ` Prize: ${millions(share)}${calls.length > 1 ? ' each' : ''}.` : '';
+      say(`${joinList(calls)} ${calls.length > 1 ? 'win' : 'wins'}!${prize}`);
+    } else {
+      say('Game over. Nobody won.');
+    }
+  }
   game = state;
   gameOut = new Map((state?.out || []).map((o) => [o.id, o.round]));
   gameWinners = new Set((state?.winners || []).map((w) => w.id));
@@ -402,9 +464,11 @@ socket.on('rl:phase', ({ phase, cycle, cycles }) => {
   banner.dataset.phase = phase;
   $('phase-text').textContent = phase === 'green' ? 'GREEN LIGHT' : 'RED LIGHT';
   $('phase-cycle').textContent = `Light ${cycle} of ${cycles}`;
+  say(phase === 'green' ? 'Green light.' : 'Red light!', { urgent: true });
 });
 
 socket.on('rl:player', ({ id, status, progress }) => {
+  if (status === 'eliminated' && roundState.get(id)?.status !== 'eliminated') announceOut(id);
   roundState.set(id, { status, progress });
   applyRoundState(id);
 });
@@ -442,9 +506,17 @@ socket.on('tow:start', ({ teams }) => {
   $('tow-timer').textContent = '';
   $('knot').style.left = '50%';
   showRoundView('tow-view');
+  towPulling = false;
+  say('Tug of war. Get ready.', { urgent: true });
 });
 
+let towPulling = false; // whether "Pull!" has been announced this round
+
 socket.on('tow:state', ({ phase, rope, force, msLeft }) => {
+  if (phase === 'pull' && !towPulling) {
+    towPulling = true;
+    say('Pull!', { urgent: true });
+  }
   // rope: +1 = Pink wins (left), -1 = Teal wins (right).
   $('knot').style.left = `${50 - rope * 50}%`;
   $('force-pink').style.width = `${Math.min(force.pink / METER_MAX, 1) * 100}%`;
@@ -463,6 +535,7 @@ socket.on('tow:over', ({ reason, winner, results }) => {
   $('tow-view').dataset.winner = winner || '';
   $('tow-big').textContent = winner ? `${winner.toUpperCase()} WINS` : 'NO WINNER';
   $('tow-timer').textContent = '';
+  if (reason !== 'host') say(winner ? `Team ${winner === 'pink' ? 'Pink' : 'Teal'} wins!` : 'No winner.');
   const heading = {
     pulled: `${winner?.toUpperCase()} pulled it across!`,
     time: winner ? `Time! ${winner.toUpperCase()} was ahead` : 'Time! Dead even',
@@ -539,7 +612,11 @@ socket.on('gb:start', ({ order }) => {
   showRoundView('gb-view');
   clearInterval(gbCountdown);
   gbCountdown = setInterval(updateCountdown, 250);
+  gbTurnCalled = null;
+  say('Glass bridge.', { urgent: true });
 });
+
+let gbTurnCalled = null; // player whose turn was last announced
 
 socket.on('gb:state', (state) => {
   const previousCurrent = gbState?.current;
@@ -552,6 +629,10 @@ socket.on('gb:state', (state) => {
     gbDeadline = Date.now() + state.msLeft;
     $('gb-big').textContent = `${nameOf(state.current).toUpperCase()}'S TURN`;
     if (state.current !== previousCurrent) setNeedle(0);
+    if (state.current !== gbTurnCalled) {
+      gbTurnCalled = state.current;
+      say(`${playerCall(state.current)}, your turn.`);
+    }
     updateCountdown();
   }
   const waiting = state.players.filter((p) => p.status === 'waiting').map((p) => p.name);
@@ -568,6 +649,7 @@ socket.on('gb:jump', (jump) => {
   $('gb-big').textContent = jump.correct ? 'SAFE!' : 'CRASH!';
   const how = jump.forced ? `${jump.name} froze and was pushed ${jump.side}` : `${jump.name} jumped ${jump.side}`;
   $('gb-sub').textContent = jump.correct ? `${how}. Tempered glass!` : `${how}. The glass shattered.`;
+  say(jump.correct ? 'Safe.' : `${playerCall(jump.id)}, eliminated.`, { urgent: true });
 });
 
 socket.on('gb:over', ({ reason, results }) => {
