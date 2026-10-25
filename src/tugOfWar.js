@@ -6,7 +6,7 @@
 // side the rope is wins.
 
 const DEFAULT_OPTIONS = {
-  countdownMs: 3000,
+  countdownMs: 5000, // doubles as the round's 5-second briefing
   durationMs: 30000,
   tickMs: 100,
   staleMs: 400, // a reading older than this counts as not shaking

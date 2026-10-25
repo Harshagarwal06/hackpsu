@@ -15,14 +15,24 @@ const { Game } = require('./src/game');
 const PLAYER_RECONNECT_MS = 30000;
 const HOST_RECONNECT_MS = 60000;
 
+// Before every round, everyone sees a short briefing with its rules.
+const INTRO_MS = 5000;
+const INTRO = {
+  redlight: { name: 'Red Light, Green Light', rules: ['Green: move to fill your bar.', 'Red: freeze, or you are out.'] },
+  tug: { name: 'Tug of War', rules: ['You are on Team Pink or Team Teal.', 'Shake as hard as you can.'] },
+  bridge: { name: 'Glass Bridge', rules: ['Take turns crossing.', 'Tilt left or right and hold 1 second to jump.'] },
+};
+
 // Socket.IO channels: everyone in a room, the room's host, one player.
 const roomCh = (room) => room.code;
 const hostCh = (room) => `host:${room.code}`;
 const playerCh = (id) => `player:${id}`;
 
 // roundOptions / tugOptions / bridgeOptions let tests run rounds with short timers;
-// reconnectMs overrides both reconnect windows.
-function createGameServer({ roundOptions, tugOptions, bridgeOptions, reconnectMs } = {}) {
+// reconnectMs overrides both reconnect windows; introMs the briefing length.
+function createGameServer({
+  roundOptions, tugOptions, bridgeOptions, reconnectMs, introMs = INTRO_MS,
+} = {}) {
   const app = express();
   app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
 
@@ -86,10 +96,37 @@ function createGameServer({ roundOptions, tugOptions, bridgeOptions, reconnectMs
     io.to(hostCh(room)).emit('room:players', publicPlayers(room));
   }
 
-  // Each round starter takes the players who take part, and an optional
-  // callback that runs after the round's results have been sent.
+  // Shows the round's briefing to everyone, then starts the round when the
+  // countdown ends. Tug of War's own countdown is the briefing, so it starts
+  // straight away (players see their teams during it).
+  //   how: { label: 'Practice' | 'Round 2', extra: [more rule lines] }
+  function begin(room, round, key, names, { label, extra = [] }) {
+    room.round = round;
+    const countdownIsBriefing = round instanceof TugOfWarRound;
+    const ms = countdownIsBriefing ? round.opts.countdownMs : introMs;
+    const info = {
+      key,
+      title: `${label} · ${INTRO[key].name}`,
+      rules: [...INTRO[key].rules, ...extra],
+      ms,
+      players: [...names.keys()],
+    };
+    room.intro = { info, endsAt: Date.now() + ms };
+    io.to(roomCh(room)).emit('round:intro', info);
+    if (countdownIsBriefing) round.start();
+    const t = setTimeout(() => {
+      if (room.intro?.info === info) room.intro = null;
+      // The host may have ended the round during the briefing.
+      if (!countdownIsBriefing && room.round === round && round.phase === 'idle') round.start();
+    }, ms);
+    t.unref();
+  }
 
-  function startRedLight(room, names, afterOver) {
+  // Each round starter takes the players who take part, an optional callback
+  // that runs after the round's results have been sent, and how the round is
+  // introduced: { label, picks (Tug of War), order (Glass Bridge) }.
+
+  function startRedLight(room, names, afterOver, { label = 'Practice' } = {}) {
     if (names.size === 0) throw new RoomError('NO_PLAYERS', 'Wait for at least one player to join.');
     const round = new RedLightRound({
       players: names,
@@ -102,17 +139,17 @@ function createGameServer({ roundOptions, tugOptions, bridgeOptions, reconnectMs
         player: (id, state) => io.to([hostCh(room), playerCh(id)]).emit('rl:player', { id, ...state }),
         over: (summary) => {
           room.round = null;
+          room.intro = null;
           io.to(roomCh(room)).emit('rl:over', summary);
           afterOver?.(summary);
         },
       },
     });
-    room.round = round;
-    round.start();
+    begin(room, round, 'redlight', names, { label });
   }
 
   // picks: Map of id -> team chosen by the host (practice only).
-  function startTugOfWar(room, names, afterOver, picks = new Map()) {
+  function startTugOfWar(room, names, afterOver, { label = 'Practice', picks = new Map() } = {}) {
     if (names.size < 2) throw new RoomError('NOT_ENOUGH_PLAYERS', 'Tug of War needs at least 2 players.');
     const unpicked = [...names.keys()].filter((id) => !picks.has(id)).length;
     const pickedTeams = new Set([...picks].filter(([id]) => names.has(id)).map(([, team]) => team));
@@ -128,17 +165,17 @@ function createGameServer({ roundOptions, tugOptions, bridgeOptions, reconnectMs
         state: (info) => io.to(roomCh(room)).volatile.emit('tow:state', info),
         over: (summary) => {
           room.round = null;
+          room.intro = null;
           io.to(roomCh(room)).emit('tow:over', summary);
           afterOver?.(summary);
         },
       },
     });
-    room.round = round;
-    round.start();
+    begin(room, round, 'tug', names, { label });
   }
 
   // order: turn order earned in the game (practice rounds are random).
-  function startGlassBridge(room, names, afterOver, order = null) {
+  function startGlassBridge(room, names, afterOver, { label = 'Practice', order = null } = {}) {
     if (names.size === 0) throw new RoomError('NO_PLAYERS', 'Wait for at least one player to join.');
     const round = new GlassBridgeRound({
       players: names,
@@ -150,13 +187,16 @@ function createGameServer({ roundOptions, tugOptions, bridgeOptions, reconnectMs
         jump: (info) => io.to(roomCh(room)).emit('gb:jump', info),
         over: (summary) => {
           room.round = null;
+          room.intro = null;
           io.to(roomCh(room)).emit('gb:over', summary);
           afterOver?.(summary);
         },
       },
     });
-    room.round = round;
-    round.start();
+    begin(room, round, 'bridge', names, {
+      label,
+      extra: order ? ['Best players from earlier rounds cross last.'] : [],
+    });
   }
 
   const STARTERS = { redlight: startRedLight, tug: startTugOfWar, bridge: startGlassBridge };
@@ -165,7 +205,7 @@ function createGameServer({ roundOptions, tugOptions, bridgeOptions, reconnectMs
   function startPractice(room, key, picks) {
     if (room.round) throw new RoomError('ROUND_RUNNING', 'A round is already running.');
     if (room.game?.isActive()) throw new RoomError('GAME_RUNNING', 'Finish or end the game first.');
-    STARTERS[key](room, allPlayers(room), undefined, picks);
+    STARTERS[key](room, allPlayers(room), undefined, { label: 'Practice', picks });
   }
 
   // The host's team picks for practice Tug of War: { [player id]: 'pink' | 'teal' }.
@@ -193,14 +233,14 @@ function createGameServer({ roundOptions, tugOptions, bridgeOptions, reconnectMs
   // Starts the game's next round with only the players still in.
   function startGameRound(room) {
     if (room.round) throw new RoomError('ROUND_RUNNING', 'A round is already running.');
+    const label = `Round ${room.game.stage + 1}`;
     const { key, players, order } = room.game.nextRound();
     emitGame(room);
     const afterOver = (summary) => {
       room.game.roundOver(summary.results);
       emitGame(room);
     };
-    if (key === 'bridge') startGlassBridge(room, players, afterOver, order);
-    else STARTERS[key](room, players, afterOver);
+    STARTERS[key](room, players, afterOver, { label, order });
   }
 
   // Catches a reconnected screen up on the round in progress, as if it had
@@ -208,6 +248,10 @@ function createGameServer({ roundOptions, tugOptions, bridgeOptions, reconnectMs
   function replayRound(room, socket, playerId) {
     const round = room.round;
     if (!round) return;
+    if (room.intro) {
+      socket.emit('round:intro', { ...room.intro.info, ms: Math.max(0, room.intro.endsAt - Date.now()) });
+    }
+    if (round.phase === 'idle') return; // still in the briefing
     const snap = round.snapshot();
     if (round instanceof RedLightRound) {
       socket.emit('rl:start', snap.start);

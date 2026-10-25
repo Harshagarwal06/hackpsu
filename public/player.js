@@ -211,7 +211,9 @@ function enterRoom(res) {
     ? 'A round is in progress. You will play the next one.'
     : 'Waiting for the host to start.';
   $('status-error').textContent = '';
-  // Round state from before a reconnect is out of date.
+  // Round state from before a reconnect is out of date (the server replays
+  // any briefing or round still running).
+  endIntro();
   inRound = false;
   inBridge = false;
   bridgeChoosing = false;
@@ -240,6 +242,7 @@ function leaveRoom(message) {
   sessionStorage.removeItem(PLAYER_SESSION);
   myId = null;
   myNumber = null;
+  endIntro();
   inRound = false;
   inBridge = false;
   bridgeChoosing = false;
@@ -302,6 +305,44 @@ socket.on('connect', () => {
   });
 });
 
+// --- Round briefing: rules and a countdown before every round ---
+let introInfo = null; // the briefing being shown, or null
+let introEndsAt = 0;
+let introTick = null;
+
+function endIntro() {
+  clearInterval(introTick);
+  introInfo = null;
+}
+
+// The countdown is the big number; the round title and rules go underneath.
+// In Tug of War the screen takes the player's team colour.
+function showIntro() {
+  const secs = Math.ceil((introEndsAt - Date.now()) / 1000);
+  if (secs <= 0) {
+    endIntro(); // the round's own screens take over from here
+    return;
+  }
+  const rules = [...introInfo.rules];
+  // Tug of War's first rule is "You are on Team Pink or Team Teal": once
+  // this phone knows its team, say which one instead.
+  if (myTeam && introInfo.key === 'tug') rules[0] = `You are on Team ${myTeam.toUpperCase()}.`;
+  const lines = [introInfo.title, ...rules];
+  showScreen(myTeam || 'intro', String(secs), lines.join('\n'));
+}
+
+socket.on('round:intro', (info) => {
+  if (!myId || !info.players.includes(myId)) return;
+  startingRound();
+  myTeam = null;
+  introInfo = info;
+  introEndsAt = Date.now() + info.ms;
+  clearInterval(introTick);
+  showIntro();
+  introTick = setInterval(() => { if (introInfo) showIntro(); }, 250);
+  tone(392, 523, 0.25, 'sine');
+});
+
 socket.on('rl:start', ({ players: list }) => {
   if (!myId || !list.some((p) => p.id === myId)) return;
   inRound = true;
@@ -343,6 +384,11 @@ socket.on('rl:player', ({ id, status, progress }) => {
 // weren't in the round.
 function roundOver(results) {
   if (!myId) return null;
+  if (introInfo) {
+    // The host ended the round during its briefing.
+    endIntro();
+    showScreen('lobby');
+  }
   const wasIn = inRound;
   inRound = false;
   if (!wasIn) {
@@ -370,10 +416,16 @@ socket.on('tow:start', ({ teams }) => {
   inRound = true;
   myTeam = mine.team;
   towPhase = 'countdown';
-  startingRound();
+  if (introInfo) {
+    // The countdown is the briefing: keep it up, now in the team's colour.
+    hideRoundWidgets();
+    showIntro();
+  } else {
+    startingRound();
+    showScreen(myTeam, 'GET READY', `You're on Team ${myTeam.toUpperCase()}. Shake when it says SHAKE!`);
+  }
   $('my-rope').classList.remove('hidden');
   $('my-knot').style.left = '50%';
-  showScreen(myTeam, 'GET READY', `You're on Team ${myTeam.toUpperCase()}. Shake when it says SHAKE!`);
 });
 
 socket.on('tow:state', ({ phase, rope }) => {

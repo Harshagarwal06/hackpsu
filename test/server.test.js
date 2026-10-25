@@ -14,7 +14,7 @@ function emitWithAck(socket, event, ...args) {
 }
 
 test('host + player socket flow', async (t) => {
-  const { httpServer, io } = createGameServer({ reconnectMs: 50 });
+  const { httpServer, io } = createGameServer({ introMs: 0, reconnectMs: 50 });
   await new Promise((resolve) => httpServer.listen(0, resolve));
   const url = `http://localhost:${httpServer.address().port}`;
   const host = connect(url);
@@ -53,7 +53,7 @@ test('host + player socket flow', async (t) => {
 });
 
 test('a player who drops out comes back as themselves, mid-round', async (t) => {
-  const { httpServer, io } = createGameServer({
+  const { httpServer, io } = createGameServer({ introMs: 0,
     roundOptions: { cycles: 1, greenMinMs: 5000, greenMaxMs: 5000 },
   });
   await new Promise((resolve) => httpServer.listen(0, resolve));
@@ -100,7 +100,7 @@ test('a player who drops out comes back as themselves, mid-round', async (t) => 
 });
 
 test('a player who stays away too long is dropped from the room and the game', async (t) => {
-  const { httpServer, io } = createGameServer({
+  const { httpServer, io } = createGameServer({ introMs: 0,
     reconnectMs: 50,
     roundOptions: { greenMinMs: 5000, greenMaxMs: 5000 },
   });
@@ -132,7 +132,7 @@ test('a player who stays away too long is dropped from the room and the game', a
 });
 
 test('the host reconnects to the same room and sees the game it left', async (t) => {
-  const { httpServer, io } = createGameServer({
+  const { httpServer, io } = createGameServer({ introMs: 0,
     roundOptions: { greenMinMs: 5000, greenMaxMs: 5000 },
   });
   await new Promise((resolve) => httpServer.listen(0, resolve));
@@ -174,7 +174,7 @@ test('the host reconnects to the same room and sees the game it left', async (t)
 });
 
 test('practice Tug of War uses the host\'s team picks; the real game ignores them', async (t) => {
-  const { httpServer, io } = createGameServer({
+  const { httpServer, io } = createGameServer({ introMs: 0,
     tugOptions: { countdownMs: 5000 },
     roundOptions: { greenMinMs: 5000, greenMaxMs: 5000 },
   });
@@ -218,7 +218,7 @@ test('practice Tug of War uses the host\'s team picks; the real game ignores the
 });
 
 test('the host can kick a player out of the room and the game', async (t) => {
-  const { httpServer, io } = createGameServer({
+  const { httpServer, io } = createGameServer({ introMs: 0,
     roundOptions: { greenMinMs: 5000, greenMaxMs: 5000 },
   });
   await new Promise((resolve) => httpServer.listen(0, resolve));
@@ -266,7 +266,7 @@ test('the host can kick a player out of the room and the game', async (t) => {
 });
 
 test('in a game, Glass Bridge uses the earned turn order; practice does not', async (t) => {
-  const { httpServer, io } = createGameServer({
+  const { httpServer, io } = createGameServer({ introMs: 0,
     roundOptions: { greenMinMs: 5000, greenMaxMs: 5000 },
     bridgeOptions: { chooseMs: 5000 },
   });
@@ -303,8 +303,118 @@ test('in a game, Glass Bridge uses the earned turn order; practice does not', as
   assert.deepEqual(start.order.map((p) => p.name).sort(), ['Ann', 'Ben']);
 });
 
-test('a finished game is not re-sent when a player leaves afterwards', async (t) => {
+test('every round opens with a briefing: rules, then a countdown, then the round', async (t) => {
   const { httpServer, io } = createGameServer({
+    introMs: 300,
+    roundOptions: { greenMinMs: 5000, greenMaxMs: 5000 },
+    tugOptions: { countdownMs: 300 },
+  });
+  await new Promise((resolve) => httpServer.listen(0, resolve));
+  const url = `http://localhost:${httpServer.address().port}`;
+  const host = connect(url);
+  const p1 = connect(url);
+  const p2 = connect(url);
+  t.after(() => {
+    for (const s of [host, p1, p2]) s.close();
+    io.close();
+  });
+
+  const { code } = await emitWithAck(host, 'host:create');
+  const ann = await emitWithAck(p1, 'player:join', { code, name: 'Ann' });
+  await emitWithAck(p2, 'player:join', { code, name: 'Ben' });
+
+  // Practice Red Light: the briefing comes first; the round starts after it.
+  const intro = once(p1, 'round:intro');
+  const started = once(p1, 'rl:start');
+  const t0 = Date.now();
+  await emitWithAck(host, 'host:start-redlight');
+  const info = await intro;
+  assert.equal(info.title, 'Practice · Red Light, Green Light');
+  assert.deepEqual(info.rules, ['Green: move to fill your bar.', 'Red: freeze, or you are out.']);
+  assert.equal(info.ms, 300);
+  assert.equal(info.players.length, 2);
+  assert.ok(info.players.includes(ann.id));
+  await started;
+  assert.ok(Date.now() - t0 >= 250, 'the round starts only after the countdown');
+  // Blocked while running, then ended.
+  assert.equal((await emitWithAck(host, 'host:start-tug')).error.code, 'ROUND_RUNNING');
+  await emitWithAck(host, 'host:end-round');
+
+  // Ending during the briefing cancels the round: it never starts.
+  let lateStart = false;
+  p1.on('rl:start', () => { lateStart = true; });
+  const over = once(p1, 'rl:over');
+  await emitWithAck(host, 'host:start-redlight');
+  await emitWithAck(host, 'host:end-round');
+  assert.equal((await over).reason, 'host');
+  await new Promise((resolve) => setTimeout(resolve, 450));
+  assert.equal(lateStart, false);
+
+  // A phone that reconnects during the briefing sees the rest of the countdown.
+  const replay = new Promise((resolve) => {
+    p1.once('round:intro', () => {
+      const p1b = connect(url);
+      t.after(() => p1b.close());
+      p1.disconnect();
+      p1b.once('round:intro', resolve);
+      p1b.emit('player:resume', { code, key: ann.key }, () => {});
+    });
+  });
+  await emitWithAck(host, 'host:start-bridge');
+  const again = await replay;
+  assert.equal(again.key, 'bridge');
+  assert.ok(again.ms <= 300);
+  await emitWithAck(host, 'host:end-round');
+
+  // Tug of War: its countdown is the briefing, so teams arrive with it.
+  const tugIntro = once(p2, 'round:intro');
+  const tugStart = once(p2, 'tow:start');
+  await emitWithAck(host, 'host:start-tug');
+  assert.equal((await tugIntro).ms, 300);
+  assert.equal((await tugStart).teams.length, 2);
+  await emitWithAck(host, 'host:end-round');
+});
+
+test('in a game, briefings say which round it is and explain the earned bridge order', async (t) => {
+  const { httpServer, io } = createGameServer({
+    introMs: 0,
+    roundOptions: { greenMinMs: 5000, greenMaxMs: 5000 },
+  });
+  await new Promise((resolve) => httpServer.listen(0, resolve));
+  const url = `http://localhost:${httpServer.address().port}`;
+  const host = connect(url);
+  const p1 = connect(url);
+  const p2 = connect(url);
+  t.after(() => {
+    for (const s of [host, p1, p2]) s.close();
+    io.close();
+  });
+
+  const { code } = await emitWithAck(host, 'host:create');
+  await emitWithAck(p1, 'player:join', { code, name: 'Ann' });
+  await emitWithAck(p2, 'player:join', { code, name: 'Ben' });
+  const titles = [];
+  const rules = [];
+  host.on('round:intro', (info) => { titles.push(info.title); rules.push(info.rules); });
+  await emitWithAck(host, 'host:game-start');
+  for (let i = 0; i < 2; i++) {
+    const next = once(host, 'game:state');
+    await emitWithAck(host, 'host:end-round');
+    await next;
+    const intro = once(host, 'round:intro');
+    await emitWithAck(host, 'host:game-next');
+    await intro;
+  }
+  assert.deepEqual(titles, [
+    'Round 1 · Red Light, Green Light',
+    'Round 2 · Tug of War',
+    'Round 3 · Glass Bridge',
+  ]);
+  assert.equal(rules[2].at(-1), 'Best players from earlier rounds cross last.');
+});
+
+test('a finished game is not re-sent when a player leaves afterwards', async (t) => {
+  const { httpServer, io } = createGameServer({ introMs: 0,
     reconnectMs: 30,
     roundOptions: { cycles: 1, greenMinMs: 5000, greenMaxMs: 5000 },
   });
@@ -340,7 +450,7 @@ test('a finished game is not re-sent when a player leaves afterwards', async (t)
 });
 
 test('Red Light, Green Light over sockets', async (t) => {
-  const { httpServer, io } = createGameServer({
+  const { httpServer, io } = createGameServer({ introMs: 0,
     roundOptions: { cycles: 1, greenMinMs: 50, greenMaxMs: 50, redMs: 5000, graceMs: 0 },
   });
   await new Promise((resolve) => httpServer.listen(0, resolve));
@@ -390,7 +500,7 @@ test('Red Light, Green Light over sockets', async (t) => {
 });
 
 test('Tug of War over sockets', async (t) => {
-  const { httpServer, io } = createGameServer({
+  const { httpServer, io } = createGameServer({ introMs: 0,
     tugOptions: { countdownMs: 50, durationMs: 5000, pullRate: 1 },
   });
   await new Promise((resolve) => httpServer.listen(0, resolve));
@@ -426,7 +536,7 @@ test('Tug of War over sockets', async (t) => {
 });
 
 test('Glass Bridge over sockets', async (t) => {
-  const { httpServer, io } = createGameServer({
+  const { httpServer, io } = createGameServer({ introMs: 0,
     bridgeOptions: { steps: 2, chooseMs: 5000, revealMs: 50 },
   });
   await new Promise((resolve) => httpServer.listen(0, resolve));
@@ -483,7 +593,7 @@ test('Glass Bridge over sockets', async (t) => {
 });
 
 test('a full game: survivors carry over and the game ends with a winner', async (t) => {
-  const { httpServer, io } = createGameServer({
+  const { httpServer, io } = createGameServer({ introMs: 0,
     roundOptions: { cycles: 1, greenMinMs: 50, greenMaxMs: 50, redMs: 5000, graceMs: 0 },
   });
   await new Promise((resolve) => httpServer.listen(0, resolve));
@@ -537,7 +647,7 @@ test('a full game: survivors carry over and the game ends with a winner', async 
 });
 
 test('serves the player and host pages', async (t) => {
-  const { httpServer, io } = createGameServer();
+  const { httpServer, io } = createGameServer({ introMs: 0 });
   await new Promise((resolve) => httpServer.listen(0, resolve));
   t.after(() => io.close());
   const base = `http://localhost:${httpServer.address().port}`;
@@ -548,7 +658,7 @@ test('serves the player and host pages', async (t) => {
 });
 
 test('serves a QR code for http(s) join links only', async (t) => {
-  const { httpServer, io } = createGameServer();
+  const { httpServer, io } = createGameServer({ introMs: 0 });
   await new Promise((resolve) => httpServer.listen(0, resolve));
   t.after(() => io.close());
   const base = `http://localhost:${httpServer.address().port}`;

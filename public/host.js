@@ -572,6 +572,49 @@ socket.on('player:motion', ({ id, m }) => {
   if (c) c.motion.style.width = `${Math.min(m / METER_MAX, 1) * 100}%`;
 });
 
+// --- Round briefing: rules and a countdown before every round ---
+// Korean lines for the announcer; the English comes from the rules themselves.
+const INTRO_KO = {
+  redlight: '무궁화 꽃이 피었습니다 게임. 초록불에 움직이고, 빨간불에 멈추세요.',
+  tug: '줄다리기. 있는 힘껏 흔드세요.',
+  bridge: '징검다리 건너기. 왼쪽이나 오른쪽으로 기울여서 건너세요.',
+};
+let introTimer = null;
+
+function hideIntro() {
+  clearInterval(introTimer);
+  $('intro-view').classList.add('hidden');
+}
+
+socket.on('round:intro', (info) => {
+  roundStarting();
+  roundRunning = true;
+  updateButtons();
+  $('results').classList.add('hidden');
+  $('phase-banner').classList.add('hidden');
+  showRoundView(null);
+  $('intro-title').textContent = info.title;
+  const list = $('intro-rules');
+  list.replaceChildren();
+  for (const rule of info.rules) {
+    const li = document.createElement('li');
+    li.textContent = rule;
+    list.append(li);
+  }
+  $('intro-view').classList.remove('hidden');
+  const endsAt = Date.now() + info.ms;
+  const tick = () => {
+    const secs = Math.ceil((endsAt - Date.now()) / 1000);
+    if (secs <= 0) hideIntro();
+    else $('intro-count').textContent = secs;
+  };
+  clearInterval(introTimer);
+  tick();
+  introTimer = setInterval(tick, 200);
+  const roundName = info.title.split(' · ').at(-1);
+  announce({ ko: INTRO_KO[info.key], en: `${roundName}. ${info.rules.join(' ')}`, sub: info.rules.join(' ') }, { urgent: true });
+});
+
 socket.on('rl:start', ({ players: inRound }) => {
   roundStarting();
   roundRunning = true;
@@ -603,6 +646,7 @@ socket.on('rl:player', ({ id, status, progress }) => {
 });
 
 socket.on('rl:over', ({ reason, results }) => {
+  hideIntro(); // in case the host ended it during the briefing
   roundRunning = false;
   updateButtons();
   $('phase-banner').classList.add('hidden');
@@ -636,7 +680,6 @@ socket.on('tow:start', ({ teams }) => {
   $('knot').style.left = '50%';
   showRoundView('tow-view');
   towPulling = false;
-  announce({ ko: '줄다리기. 준비하세요.', en: 'Tug of war. Get ready.' }, { urgent: true });
 });
 
 let towPulling = false; // whether "Pull!" has been announced this round
@@ -655,6 +698,7 @@ socket.on('tow:state', ({ phase, rope, force, msLeft }) => {
 });
 
 socket.on('tow:over', ({ reason, winner, results }) => {
+  hideIntro();
   roundRunning = false;
   updateButtons();
   for (const r of results) {
@@ -749,11 +793,6 @@ socket.on('gb:start', ({ order, earned }) => {
   clearInterval(gbCountdown);
   gbCountdown = setInterval(updateCountdown, 250);
   gbTurnCalled = null;
-  announce({
-    ko: '징검다리 건너기.',
-    en: earned ? 'Glass bridge. The best players cross last.' : 'Glass bridge.',
-    sub: earned ? 'Glass bridge. The best players from earlier rounds cross last.' : 'Glass bridge.',
-  }, { urgent: true });
 });
 
 let gbTurnCalled = null; // player whose turn was last announced
@@ -800,6 +839,7 @@ socket.on('gb:jump', (jump) => {
 });
 
 socket.on('gb:over', ({ reason, results }) => {
+  hideIntro();
   roundRunning = false;
   updateButtons();
   clearInterval(gbCountdown);
