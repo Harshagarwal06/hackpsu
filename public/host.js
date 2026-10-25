@@ -287,7 +287,7 @@ $('voice-select').addEventListener('change', (e) => {
 });
 
 $('voice-test').addEventListener('click', () => {
-  speak({ ko: '무궁화 꽃이 피었습니다', en: 'Green light.', sub: 'Green light. (The mugunghwa flower has bloomed.)' }, true);
+  speak({ ko: '무궁화 꽃이 피었습니다', en: 'Green light.', sub: 'Green light.' }, true);
   speak({ ko: '77번, 탈락.', en: 'Player zero seven seven, eliminated.', sub: 'Player 077: eliminated.' }, false);
 });
 
@@ -635,7 +635,7 @@ socket.on('rl:phase', ({ phase, cycle, cycles }) => {
   $('phase-cycle').textContent = `Light ${cycle} of ${cycles}`;
   setDollFacing($('banner-doll').querySelector('.doll'), phase === 'red');
   announce(phase === 'green'
-    ? { ko: '무궁화 꽃이 피었습니다', en: 'Green light.', sub: 'Green light. (The mugunghwa flower has bloomed.)' }
+    ? { ko: '무궁화 꽃이 피었습니다', en: 'Green light.', sub: 'Green light.' }
     : { ko: '멈추세요.', en: 'Red light. Stop.', sub: 'Red light! Stop.' }, { urgent: true });
 });
 
