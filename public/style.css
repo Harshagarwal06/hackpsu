@@ -128,7 +128,17 @@ input {
 
 .player-card .name { font-weight: 700; }
 
-.card-top { display: flex; justify-content: space-between; gap: 8px; }
+.card-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.card-top .status { margin-left: auto; }
+.player-card .kick {
+  padding: 2px 8px;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+.player-card .kick:hover { background: #2a2a35; color: var(--red); }
 .player-card .status { font-weight: 700; font-size: 0.9rem; }
 .player-card[data-status="eliminated"] { opacity: 0.45; }
 .player-card[data-status="eliminated"] .name { text-decoration: line-through; }

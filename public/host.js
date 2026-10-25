@@ -197,10 +197,18 @@ function renderPlayers() {
     const card = document.createElement('div');
     card.className = 'player-card';
     card.innerHTML = `
-      <div class="card-top"><span class="name"></span><span class="status"></span></div>
+      <div class="card-top"><span class="name"></span><span class="status"></span><button class="kick" type="button">✕</button></div>
       <div class="meter motion"><div></div><span class="marker"></span></div>
       <div class="meter progress"><div></div></div>`;
     card.querySelector('.name').textContent = p.connected ? p.name : `${p.name} · away`;
+    const kick = card.querySelector('.kick');
+    kick.title = `Remove ${p.name}`;
+    kick.setAttribute('aria-label', `Remove ${p.name} from the room`);
+    kick.addEventListener('click', () => {
+      if (!confirm(`Remove ${p.name} from the room?`)) return;
+      showError(null);
+      socket.emit('host:kick', p.id, (res) => showError(res.ok ? null : res.error));
+    });
     list.append(card);
     cards.set(p.id, {
       card,

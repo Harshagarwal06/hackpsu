@@ -543,6 +543,10 @@ function applyGame(game) {
 
 socket.on('game:state', applyGame);
 
+socket.on('player:kicked', () => {
+  leaveRoom('The host removed you from the room.');
+});
+
 socket.on('room:closed', () => {
   leaveRoom('The host closed the room. Scan the new code to join again.');
 });

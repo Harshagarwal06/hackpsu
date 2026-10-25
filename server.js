@@ -201,14 +201,22 @@ function createGameServer({ roundOptions, tugOptions, bridgeOptions, reconnectMs
     replayRound(room, socket, playerId);
   }
 
-  // A player stayed away too long: they leave the room, round and game.
-  function dropPlayer(room, id) {
-    const player = room.players.get(id);
-    if (!player || player.connected) return;
+  // Takes a player out of the room, round and game for good. Their socket
+  // stops getting room events and their rejoin key stops working.
+  function removeForGood(room, id) {
+    stopTimer(`player:${room.code}:${id}`);
+    io.in(playerCh(id)).socketsLeave([roomCh(room), playerCh(id)]);
     store.removePlayer(room.code, id);
     if (room.round) room.round.removePlayer(id);
     if (room.game?.removePlayer(id)) emitGame(room);
     sendPlayers(room);
+  }
+
+  // A player stayed away too long.
+  function dropPlayer(room, id) {
+    const player = room.players.get(id);
+    if (!player || player.connected) return;
+    removeForGood(room, id);
   }
 
   // The host stayed away too long: the room closes for everyone.
@@ -325,6 +333,18 @@ function createGameServer({ roundOptions, tugOptions, bridgeOptions, reconnectMs
         if (room.round) throw new RoomError('ROUND_RUNNING', 'End the current round first.');
         room.game = null;
         emitGame(room);
+        return {};
+      }, ack);
+    });
+
+    socket.on('host:kick', (id, ack) => {
+      handle(socket, () => {
+        const room = store.hostedRoom(socket.id);
+        if (typeof id !== 'string' || !room.players.has(id)) {
+          throw new RoomError('NO_PLAYER', 'That player is not in this room.');
+        }
+        io.to(playerCh(id)).emit('player:kicked');
+        removeForGood(room, id);
         return {};
       }, ack);
     });

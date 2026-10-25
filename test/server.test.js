@@ -173,6 +173,54 @@ test('the host reconnects to the same room and sees the game it left', async (t)
   assert.equal((await emitWithAck(host2, 'host:end-round')).ok, true);
 });
 
+test('the host can kick a player out of the room and the game', async (t) => {
+  const { httpServer, io } = createGameServer({
+    roundOptions: { greenMinMs: 5000, greenMaxMs: 5000 },
+  });
+  await new Promise((resolve) => httpServer.listen(0, resolve));
+  const url = `http://localhost:${httpServer.address().port}`;
+  const host = connect(url);
+  const p1 = connect(url);
+  const p2 = connect(url);
+  const p3 = connect(url);
+  t.after(() => {
+    for (const s of [host, p1, p2, p3]) s.close();
+    io.close();
+  });
+
+  const { code } = await emitWithAck(host, 'host:create');
+  const ann = await emitWithAck(p1, 'player:join', { code, name: 'Ann' });
+  await emitWithAck(p2, 'player:join', { code, name: 'Ben' });
+  await emitWithAck(p3, 'player:join', { code, name: 'Cal' });
+  await emitWithAck(host, 'host:game-start');
+
+  // Only the host can kick, and only someone in the room.
+  assert.equal((await emitWithAck(p2, 'host:kick', ann.id)).error.code, 'NOT_HOST');
+  assert.equal((await emitWithAck(host, 'host:kick', 'p_nobody')).error.code, 'NO_PLAYER');
+
+  const kicked = once(p1, 'player:kicked');
+  const players = once(host, 'room:players');
+  const game = once(host, 'game:state');
+  assert.equal((await emitWithAck(host, 'host:kick', ann.id)).ok, true);
+  await kicked;
+  assert.deepEqual((await players).map((p) => p.name), ['Ben', 'Cal']);
+  assert.deepEqual((await game).alive.map((p) => p.name), ['Ben', 'Cal']);
+
+  // Ann's phone no longer gets room events, and her rejoin key is dead.
+  // (Ending the round sends game:state to everyone still in the room.)
+  let leaked = false;
+  p1.on('game:state', () => { leaked = true; });
+  const ben = once(p2, 'game:state');
+  await emitWithAck(host, 'host:end-round');
+  await ben;
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(leaked, false);
+  const p1b = connect(url);
+  t.after(() => p1b.close());
+  const back = await emitWithAck(p1b, 'player:resume', { code, key: ann.key });
+  assert.equal(back.error.code, 'UNKNOWN_PLAYER');
+});
+
 test('a finished game is not re-sent when a player leaves afterwards', async (t) => {
   const { httpServer, io } = createGameServer({
     reconnectMs: 30,
