@@ -169,6 +169,45 @@ test('awards with no qualifying player are left out', () => {
   assert.equal(game.state().cards.length, 2);
 });
 
+test('Glass Bridge turn order is earned: the best in earlier rounds cross last', () => {
+  const game = new Game(players('Ann', 'Ben', 'Cal', 'Dee'), { random: () => 0.99 });
+  game.nextRound();
+  game.roundOver([
+    { id: 'ann', name: 'Ann', status: 'finished', crossMs: 7000 }, // red rank 0 (best)
+    { id: 'ben', name: 'Ben', status: 'finished', crossMs: 9000 }, // red rank 2
+    { id: 'cal', name: 'Cal', status: 'finished', crossMs: 8000 }, // red rank 1
+    { id: 'dee', name: 'Dee', status: 'finished', crossMs: null }, // no time: red rank 3
+  ]);
+  const tug = game.nextRound();
+  assert.equal(tug.order, null);
+  game.roundOver([
+    { id: 'ann', name: 'Ann', team: 'pink', status: 'won', avgShake: 5 }, //  tug rank 3 -> total 3
+    { id: 'ben', name: 'Ben', team: 'pink', status: 'won', avgShake: 20 }, // tug rank 0 -> total 2
+    { id: 'cal', name: 'Cal', team: 'teal', status: 'playing', avgShake: 12 }, // tug rank 1 -> total 2
+    { id: 'dee', name: 'Dee', team: 'teal', status: 'playing', avgShake: 8 }, // tug rank 2 -> total 5
+  ]);
+  const bridge = game.nextRound();
+  assert.equal(bridge.key, 'bridge');
+  // Worst total first, best last; Ben and Cal tie on 2 and keep the shuffled order.
+  assert.equal(bridge.order[0], 'dee');
+  assert.equal(bridge.order[1], 'ann');
+  assert.deepEqual(new Set(bridge.order.slice(2)), new Set(['ben', 'cal']));
+  assert.deepEqual(new Set(bridge.order), new Set(['ann', 'ben', 'cal', 'dee']));
+});
+
+test('ties in the bridge order are settled at random, not by join order', () => {
+  const orders = new Set();
+  for (const r of [0, 0.5, 0.99]) {
+    const game = new Game(players('Ann', 'Ben', 'Cal'), { random: () => r });
+    game.nextRound();
+    game.roundOver([result('ann', 'playing'), result('ben', 'playing'), result('cal', 'playing')]);
+    game.nextRound();
+    game.roundOver([result('ann', 'playing'), result('ben', 'playing'), result('cal', 'playing')]);
+    orders.add(game.nextRound().order.join(','));
+  }
+  assert.ok(orders.size > 1);
+});
+
 test('rounds can only start between rounds', () => {
   const game = new Game(players('Ann', 'Ben'));
   game.nextRound();

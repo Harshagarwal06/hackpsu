@@ -367,6 +367,8 @@ button.big { font-size: 1.15rem; padding: 1rem 1.6rem; }
 .bridge-step.row-labels { flex: 0 0 auto; grid-template-rows: 56px 56px; }
 .panel-label { display: grid; align-items: center; font-size: 0.75rem; font-weight: 700; color: var(--muted); }
 .gb-queue { margin-top: 12px; }
+.gb-order-note { margin-top: 6px; color: #ffd166; font-weight: 600; }
+.gb-order-note:empty { display: none; }
 
 /* --- Art: the doll and the guards (art.js) --- */
 .doll, .guard { display: block; height: 100%; width: auto; overflow: visible; }

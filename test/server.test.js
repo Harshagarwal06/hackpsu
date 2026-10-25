@@ -265,6 +265,44 @@ test('the host can kick a player out of the room and the game', async (t) => {
   assert.equal(back.error.code, 'UNKNOWN_PLAYER');
 });
 
+test('in a game, Glass Bridge uses the earned turn order; practice does not', async (t) => {
+  const { httpServer, io } = createGameServer({
+    roundOptions: { greenMinMs: 5000, greenMaxMs: 5000 },
+    bridgeOptions: { chooseMs: 5000 },
+  });
+  await new Promise((resolve) => httpServer.listen(0, resolve));
+  const url = `http://localhost:${httpServer.address().port}`;
+  const host = connect(url);
+  const p1 = connect(url);
+  const p2 = connect(url);
+  t.after(() => {
+    for (const s of [host, p1, p2]) s.close();
+    io.close();
+  });
+
+  const { code } = await emitWithAck(host, 'host:create');
+  await emitWithAck(p1, 'player:join', { code, name: 'Ann' });
+  await emitWithAck(p2, 'player:join', { code, name: 'Ben' });
+
+  const practice = once(host, 'gb:start');
+  await emitWithAck(host, 'host:start-bridge');
+  assert.equal((await practice).earned, false);
+  await emitWithAck(host, 'host:end-round');
+
+  await emitWithAck(host, 'host:game-start');
+  for (let i = 0; i < 2; i++) {
+    const next = once(host, 'game:state');
+    await emitWithAck(host, 'host:end-round');
+    await next;
+    if (i === 0) await emitWithAck(host, 'host:game-next');
+  }
+  const bridge = once(host, 'gb:start');
+  await emitWithAck(host, 'host:game-next');
+  const start = await bridge;
+  assert.equal(start.earned, true);
+  assert.deepEqual(start.order.map((p) => p.name).sort(), ['Ann', 'Ben']);
+});
+
 test('a finished game is not re-sent when a player leaves afterwards', async (t) => {
   const { httpServer, io } = createGameServer({
     reconnectMs: 30,

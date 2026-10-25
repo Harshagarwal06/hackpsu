@@ -48,10 +48,22 @@ function best(results, score, lowerIsBetter) {
   return top;
 }
 
+// Sorts ids by a value, best first; players with no value go last.
+function byValue(ids, value, lowerIsBetter) {
+  return [...ids].sort((a, b) => {
+    const va = value(a);
+    const vb = value(b);
+    if (va == null || vb == null) return (va == null) - (vb == null);
+    return lowerIsBetter ? va - vb : vb - va;
+  });
+}
+
 class Game {
   // players: Map of id -> name
-  constructor(players) {
+  // random: breaks ties in the Glass Bridge order (tests pass their own)
+  constructor(players, { random = Math.random } = {}) {
     if (players.size < 2) throw new Error('A game needs at least 2 players.');
+    this.random = random;
     this.alive = new Map(players);
     this.out = []; // [{ id, name, round }] in the order they went out
     this.stage = 0; // index of the next round to play
@@ -61,14 +73,41 @@ class Game {
     this.ending = null; // awards and result cards, worked out once the game is over
   }
 
-  // Starts the next round. Returns its key and the players who take part.
+  // Starts the next round. Returns its key and the players who take part,
+  // plus the earned turn order for Glass Bridge.
   nextRound() {
     if (this.phase !== 'ready' && this.phase !== 'intermission') {
       throw new Error(`Can't start a round while the game is "${this.phase}".`);
     }
     this.phase = 'playing';
     this.note = '';
-    return { key: ROUNDS[this.stage].key, players: new Map(this.alive) };
+    const key = ROUNDS[this.stage].key;
+    return {
+      key,
+      players: new Map(this.alive),
+      order: key === 'bridge' ? this.bridgeOrder() : null,
+    };
+  }
+
+  // Glass Bridge turn order, first to last. Going later is an advantage
+  // (you learn from others' falls), so it's earned: each survivor is ranked
+  // by Red Light crossing time (faster is better) and by Tug of War average
+  // shake (stronger is better); the lowest total of the two ranks crosses
+  // last. Ties and missing stats are settled at random.
+  bridgeOrder() {
+    const ids = [...this.alive.keys()];
+    for (let i = ids.length - 1; i > 0; i--) {
+      const j = Math.floor(this.random() * (i + 1));
+      [ids[i], ids[j]] = [ids[j], ids[i]];
+    }
+    const stat = (key, field) => (id) => this.history.find((h) => h.key === key)
+      ?.results.find((r) => r.id === id)?.[field];
+    const rank = (sorted) => new Map(sorted.map((id, i) => [id, i]));
+    const red = rank(byValue(ids, stat('redlight', 'crossMs'), true));
+    const tug = rank(byValue(ids, stat('tug', 'avgShake'), false));
+    // Best first by total rank (sort is stable, so ties keep the shuffled order),
+    // then reversed so the best crosses last.
+    return [...ids].sort((a, b) => (red.get(a) + tug.get(a)) - (red.get(b) + tug.get(b))).reverse();
   }
 
   // Applies a finished round's results. 'eliminated' players are out, unless

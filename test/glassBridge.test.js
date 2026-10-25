@@ -33,6 +33,29 @@ test('bridge length scales with players, between 3 and 10', () => {
   assert.equal(stepsFor(40), 10);
 });
 
+test('a given turn order is used as-is and marked as earned', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_000_000 });
+  const events = [];
+  const round = new GlassBridgeRound({
+    players: new Map([['a', 'Ann'], ['b', 'Ben'], ['c', 'Cal']]),
+    order: ['c', 'a', 'b'],
+    random: () => 0.99,
+    options: OPTIONS,
+    on: { start: (info) => events.push(info), state() {}, jump() {}, over() {} },
+  });
+  round.start();
+  assert.deepEqual(events[0].order.map((p) => p.id), ['c', 'a', 'b']);
+  assert.equal(events[0].earned, true);
+  assert.equal(round.current, 'c');
+  assert.throws(() => new GlassBridgeRound({ players: new Map([['a', 'Ann']]), order: ['a', 'zz'], on: {} }));
+});
+
+test('without an order, the turn order is random and not marked earned', (t) => {
+  const { round, events } = setup(t);
+  round.start();
+  assert.equal(events[0][1].earned, false);
+});
+
 test('first player goes first and only they can choose', (t) => {
   const { round, events } = setup(t);
   round.start();

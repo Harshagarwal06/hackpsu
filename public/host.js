@@ -731,8 +731,11 @@ function updateCountdown() {
   $('gb-sub').textContent = `Step ${gbState.position + 1} of ${gbState.steps} · ${secs}s to jump`;
 }
 
-socket.on('gb:start', ({ order }) => {
+socket.on('gb:start', ({ order, earned }) => {
   roundStarting();
+  $('gb-order-note').textContent = earned
+    ? 'Turn order is earned: whoever did best in Red Light and Tug of War crosses last.'
+    : '';
   roundRunning = true;
   updateButtons();
   roundState.clear();
@@ -746,7 +749,11 @@ socket.on('gb:start', ({ order }) => {
   clearInterval(gbCountdown);
   gbCountdown = setInterval(updateCountdown, 250);
   gbTurnCalled = null;
-  announce({ ko: '징검다리 건너기.', en: 'Glass bridge.' }, { urgent: true });
+  announce({
+    ko: '징검다리 건너기.',
+    en: earned ? 'Glass bridge. The best players cross last.' : 'Glass bridge.',
+    sub: earned ? 'Glass bridge. The best players from earlier rounds cross last.' : 'Glass bridge.',
+  }, { urgent: true });
 });
 
 let gbTurnCalled = null; // player whose turn was last announced

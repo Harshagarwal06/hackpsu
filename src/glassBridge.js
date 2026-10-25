@@ -21,8 +21,9 @@ function stepsFor(playerCount) {
 
 class GlassBridgeRound {
   // players: Map of id -> name
+  // order: ids in turn order (first to last); omitted = random order
   // on: { start(info), state(info), jump(info), over(summary) }
-  constructor({ players, on, random = Math.random, options = {} }) {
+  constructor({ players, order = null, on, random = Math.random, options = {} }) {
     if (players.size < 1) throw new Error('Glass Bridge needs at least 1 player.');
     this.opts = { ...DEFAULT_OPTIONS, ...options };
     this.on = on;
@@ -36,11 +37,19 @@ class GlassBridgeRound {
     this.deadline = 0;
     this.timer = null;
 
-    const ids = [...players.keys()];
-    for (let i = ids.length - 1; i > 0; i--) {
-      const j = Math.floor(random() * (i + 1));
-      [ids[i], ids[j]] = [ids[j], ids[i]];
+    let ids;
+    if (order) {
+      const same = order.length === players.size && order.every((id) => players.has(id));
+      if (!same) throw new Error('The turn order must list every player exactly once.');
+      ids = [...order];
+    } else {
+      ids = [...players.keys()];
+      for (let i = ids.length - 1; i > 0; i--) {
+        const j = Math.floor(random() * (i + 1));
+        [ids[i], ids[j]] = [ids[j], ids[i]];
+      }
     }
+    this.earnedOrder = Boolean(order);
     // reached: how many steps the player got past (the step they fell on, or
     // all of them if they crossed). Falls always happen on a new step, so two
     // players who fell never have the same value.
@@ -53,10 +62,7 @@ class GlassBridgeRound {
 
   start() {
     if (this.phase !== 'idle') throw new Error('Round already started.');
-    this.on.start({
-      steps: this.steps,
-      order: [...this.players.values()].map(({ id, name }) => ({ id, name })),
-    });
+    this.on.start(this.startInfo());
     this.nextTurn();
   }
 
@@ -160,12 +166,18 @@ class GlassBridgeRound {
     this.on.state(this.stateInfo());
   }
 
+  // earned: the order comes from earlier rounds rather than chance.
+  startInfo() {
+    return {
+      steps: this.steps,
+      order: [...this.players.values()].map(({ id, name }) => ({ id, name })),
+      earned: this.earnedOrder,
+    };
+  }
+
   // Everything a reconnecting screen needs to catch up.
   snapshot() {
-    return {
-      start: { steps: this.steps, order: [...this.players.values()].map(({ id, name }) => ({ id, name })) },
-      state: this.stateInfo(),
-    };
+    return { start: this.startInfo(), state: this.stateInfo() };
   }
 
   stateInfo() {

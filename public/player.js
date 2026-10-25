@@ -461,10 +461,13 @@ function startingRound() {
   $('status-error').textContent = '';
 }
 
-socket.on('gb:start', ({ order }) => {
+let bridgeEarned = false; // turn order comes from earlier rounds
+
+socket.on('gb:start', ({ order, earned }) => {
   if (!myId || !order.some((p) => p.id === myId)) return;
   inRound = true;
   inBridge = true;
+  bridgeEarned = earned;
   startingRound();
   showScreen('bridge', 'GLASS BRIDGE', 'Take turns crossing. Watch the big screen.');
 });
@@ -474,8 +477,14 @@ socket.on('gb:state', ({ phase, current, position, steps, players: list }) => {
   const me = list.find((p) => p.id === myId);
   if (!me) return;
   if (me.status === 'waiting') {
-    const place = list.filter((p) => p.status === 'waiting').findIndex((p) => p.id === myId) + 1;
-    const hint = place === 1 ? "You're next! Get ready to tilt." : `You're #${place} in line. Watch the big screen.`;
+    const waiting = list.filter((p) => p.status === 'waiting');
+    const place = waiting.findIndex((p) => p.id === myId) + 1;
+    let hint = place === 1 ? "You're next! Get ready to tilt." : `You're #${place} in line. Watch the big screen.`;
+    if (bridgeEarned) {
+      hint += place === waiting.length
+        ? ' You did best in the earlier rounds, so you cross last.'
+        : ' The best players from earlier rounds cross last.';
+    }
     showScreen('bridge', 'WAIT', hint);
   } else if (me.status === 'onBridge' && current === myId && phase === 'choosing') {
     if (!bridgeChoosing) {

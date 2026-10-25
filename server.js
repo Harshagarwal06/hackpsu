@@ -137,10 +137,12 @@ function createGameServer({ roundOptions, tugOptions, bridgeOptions, reconnectMs
     round.start();
   }
 
-  function startGlassBridge(room, names, afterOver) {
+  // order: turn order earned in the game (practice rounds are random).
+  function startGlassBridge(room, names, afterOver, order = null) {
     if (names.size === 0) throw new RoomError('NO_PLAYERS', 'Wait for at least one player to join.');
     const round = new GlassBridgeRound({
       players: names,
+      order,
       options: bridgeOptions,
       on: {
         start: (info) => io.to(roomCh(room)).emit('gb:start', info),
@@ -191,12 +193,14 @@ function createGameServer({ roundOptions, tugOptions, bridgeOptions, reconnectMs
   // Starts the game's next round with only the players still in.
   function startGameRound(room) {
     if (room.round) throw new RoomError('ROUND_RUNNING', 'A round is already running.');
-    const { key, players } = room.game.nextRound();
+    const { key, players, order } = room.game.nextRound();
     emitGame(room);
-    STARTERS[key](room, players, (summary) => {
+    const afterOver = (summary) => {
       room.game.roundOver(summary.results);
       emitGame(room);
-    });
+    };
+    if (key === 'bridge') startGlassBridge(room, players, afterOver, order);
+    else STARTERS[key](room, players, afterOver);
   }
 
   // Catches a reconnected screen up on the round in progress, as if it had
