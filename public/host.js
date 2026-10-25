@@ -98,27 +98,44 @@ $('threshold').addEventListener('input', (e) => {
   socket.emit('host:threshold', value, (res) => showError(res.ok ? null : res.error));
 });
 
-// Sends a host command; shows its error if it fails.
-function command(event) {
+// Buttons waiting for the server to answer. They stay greyed out until it
+// does, so a double-click can't send the same command twice.
+const pendingButtons = new Set();
+const COMMAND_TIMEOUT_MS = 5000;
+
+// Sends a host command from a button; shows its error if it fails.
+// payload is optional.
+function command(button, event, payload) {
+  if (pendingButtons.has(button)) return;
+  pendingButtons.add(button);
+  button.disabled = true;
   showError(null);
-  socket.emit(event, (res) => showError(res.ok ? null : res.error));
+  const done = (err, res) => {
+    pendingButtons.delete(button);
+    if (err) showError({ message: 'No reply from the server. Try again.' });
+    else showError(res.ok ? null : res.error);
+    button.disabled = false; // updateButtons decides if it should stay off
+    updateButtons();
+  };
+  const timed = socket.timeout(COMMAND_TIMEOUT_MS);
+  if (payload === undefined) timed.emit(event, done);
+  else timed.emit(event, payload, done);
 }
 
-$('start-btn').addEventListener('click', () => command('host:start-redlight'));
+$('start-btn').addEventListener('click', (e) => command(e.currentTarget, 'host:start-redlight'));
 // Practice Tug of War teams picked on the player cards: id -> 'pink' | 'teal'.
 // Anyone not picked is placed randomly. The real game always uses random teams.
 const teamPicks = new Map();
 const NEXT_PICK = { random: 'pink', pink: 'teal', teal: 'random' };
 const PICK_LABEL = { random: 'Team: random', pink: 'Team: Pink', teal: 'Team: Teal' };
 
-$('tug-btn').addEventListener('click', () => {
-  showError(null);
-  socket.emit('host:start-tug', { teams: Object.fromEntries(teamPicks) }, (res) => showError(res.ok ? null : res.error));
+$('tug-btn').addEventListener('click', (e) => {
+  command(e.currentTarget, 'host:start-tug', { teams: Object.fromEntries(teamPicks) });
 });
-$('bridge-btn').addEventListener('click', () => command('host:start-bridge'));
-$('game-btn').addEventListener('click', () => command('host:game-start'));
-$('next-btn').addEventListener('click', () => command('host:game-next'));
-$('endgame-btn').addEventListener('click', () => command('host:game-end'));
+$('bridge-btn').addEventListener('click', (e) => command(e.currentTarget, 'host:start-bridge'));
+$('game-btn').addEventListener('click', (e) => command(e.currentTarget, 'host:game-start'));
+$('next-btn').addEventListener('click', (e) => command(e.currentTarget, 'host:game-next'));
+$('endgame-btn').addEventListener('click', (e) => command(e.currentTarget, 'host:game-end'));
 
 // Shows one round's big-screen view (or none), hiding the others and the
 // previous round's results.
@@ -127,9 +144,7 @@ function showRoundView(id) {
   $('results').classList.add('hidden');
 }
 
-$('end-btn').addEventListener('click', () => {
-  socket.emit('host:end-round', (res) => showError(res.ok ? null : res.error));
-});
+$('end-btn').addEventListener('click', (e) => command(e.currentTarget, 'host:end-round'));
 
 // Team buttons only make sense between practice rounds.
 function updateTeamPicks() {
@@ -158,6 +173,8 @@ function updateButtons() {
   if (canNext) $('next-btn').textContent = `Next round: ${game.next}`;
   $('end-btn').classList.toggle('hidden', !roundRunning);
   $('endgame-btn').classList.toggle('hidden', !game || roundRunning);
+  // Still waiting for the server: keep these off whatever else changed.
+  for (const button of pendingButtons) button.disabled = true;
 }
 
 // --- Game (rounds in a row, survivors carry over) ----------------------------
@@ -504,8 +521,7 @@ function renderPlayers() {
     kick.setAttribute('aria-label', `Remove ${p.name} from the room`);
     kick.addEventListener('click', () => {
       if (!confirm(`Remove ${p.name} from the room?`)) return;
-      showError(null);
-      socket.emit('host:kick', p.id, (res) => showError(res.ok ? null : res.error));
+      command(kick, 'host:kick', p.id);
     });
     list.append(card);
     cards.set(p.id, {
