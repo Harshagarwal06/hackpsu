@@ -44,7 +44,11 @@ class GlassBridgeRound {
     // reached: how many steps the player got past (the step they fell on, or
     // all of them if they crossed). Falls always happen on a new step, so two
     // players who fell never have the same value.
-    this.players = new Map(ids.map((id) => [id, { id, name: players.get(id), status: 'waiting', reached: 0 }]));
+    // correctNew: correct guesses on panels nobody had revealed yet;
+    // fastestMs: quickest jump the player chose themselves (for awards).
+    this.players = new Map(ids.map((id) => [id, {
+      id, name: players.get(id), status: 'waiting', reached: 0, correctNew: 0, fastestMs: null,
+    }]));
   }
 
   start() {
@@ -95,8 +99,15 @@ class GlassBridgeRound {
     this.phase = 'revealing';
     const step = this.position;
     const correct = side === this.safe[step];
-    if (step === this.revealed) this.revealed++;
+    const unknown = step === this.revealed;
+    if (unknown) this.revealed++;
     const p = this.players.get(id);
+    if (!forced) {
+      const ms = Date.now() - (this.deadline - this.opts.chooseMs);
+      p.fastestMs = p.fastestMs === null ? ms : Math.min(p.fastestMs, ms);
+    }
+    // Being pushed onto a panel isn't a guess, so only chosen jumps count.
+    if (correct && unknown && !forced) p.correctNew++;
     this.on.jump({ id, name: p.name, step, side, correct, forced });
 
     if (correct) {
@@ -174,13 +185,15 @@ class GlassBridgeRound {
     clearTimeout(this.timer);
     this.phase = 'over';
     this.current = null;
-    const results = [...this.players.values()].map(({ id, name, status, reached }) => {
+    const results = [...this.players.values()].map(({ id, name, status, reached, correctNew, fastestMs }) => {
       let final = status;
       if (status === 'waiting' || status === 'onBridge') {
         // With the whole bridge revealed, everyone left walks across.
         final = reason === 'crossed' ? 'finished' : 'playing';
       }
-      return { id, name, status: final, reached: final === 'finished' ? this.steps : reached };
+      return {
+        id, name, status: final, reached: final === 'finished' ? this.steps : reached, correctNew, fastestMs,
+      };
     });
     this.on.over({ reason, steps: this.steps, revealed: this.safe.slice(0, this.revealed), results });
   }

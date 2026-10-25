@@ -10,6 +10,8 @@ const crypto = require('node:crypto');
 const CODE_LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
 const CODE_LENGTH = 4;
 const MAX_NAME_LENGTH = 16;
+// Player numbers, like the show's 456 contestants.
+const MAX_PLAYER_NUMBER = 456;
 // Sensitivity threshold in m/s²: motion above this counts as "moving".
 const DEFAULT_THRESHOLD = 1.5;
 const MIN_THRESHOLD = 0.1;
@@ -35,9 +37,10 @@ function randomToken(prefix) {
 }
 
 class RoomStore {
-  constructor({ generateCode = randomCode, generateToken = randomToken } = {}) {
+  constructor({ generateCode = randomCode, generateToken = randomToken, random = Math.random } = {}) {
     this.generateCode = generateCode;
     this.generateToken = generateToken;
+    this.random = random;
     this.rooms = new Map(); // code -> room
     this.sockets = new Map(); // socket id -> { code, role: 'host' | 'player', id }
   }
@@ -99,6 +102,7 @@ class RoomStore {
       id: this.generateToken('p_'),
       key: this.generateToken('k_'),
       name,
+      number: this.freeNumber(room),
       socketId,
       connected: true,
     };
@@ -201,6 +205,17 @@ class RoomStore {
     return room;
   }
 
+  // A random player number (1-456) nobody in the room has.
+  freeNumber(room) {
+    const taken = new Set([...room.players.values()].map((p) => p.number));
+    if (taken.size >= MAX_PLAYER_NUMBER) {
+      throw new RoomError('ROOM_FULL', `This room already has ${MAX_PLAYER_NUMBER} players.`);
+    }
+    const free = [];
+    for (let n = 1; n <= MAX_PLAYER_NUMBER; n++) if (!taken.has(n)) free.push(n);
+    return free[Math.floor(this.random() * free.length)];
+  }
+
   assertFree(socketId) {
     if (this.sockets.has(socketId)) {
       throw new RoomError('ALREADY_IN_ROOM', 'This connection is already in a room.');
@@ -218,7 +233,7 @@ class RoomStore {
 }
 
 function publicPlayers(room) {
-  return [...room.players.values()].map(({ id, name, connected }) => ({ id, name, connected }));
+  return [...room.players.values()].map(({ id, name, number, connected }) => ({ id, name, number, connected }));
 }
 
 module.exports = {
@@ -227,6 +242,7 @@ module.exports = {
   randomCode,
   publicPlayers,
   MAX_NAME_LENGTH,
+  MAX_PLAYER_NUMBER,
   DEFAULT_THRESHOLD,
   MIN_THRESHOLD,
   MAX_THRESHOLD,

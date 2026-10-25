@@ -32,7 +32,25 @@ test('joinRoom gives a stable id and a rejoin key, accepts lowercase codes, trim
   assert.match(player.id, /^p_/);
   assert.match(player.key, /^k_/);
   assert.notEqual(player.id, 's1');
-  assert.deepEqual(publicPlayers(room), [{ id: player.id, name: 'Harsh', connected: true }]);
+  assert.ok(player.number >= 1 && player.number <= 456);
+  assert.deepEqual(publicPlayers(room), [{ id: player.id, name: 'Harsh', number: player.number, connected: true }]);
+});
+
+test('every player in a room gets a different number from 1 to 456', () => {
+  const store = storeWithCodes('ABCD');
+  store.createRoom('s-host');
+  const numbers = new Set();
+  for (let i = 0; i < 60; i++) numbers.add(store.joinRoom('ABCD', `s${i}`, `P${i}`).player.number);
+  assert.equal(numbers.size, 60);
+  for (const n of numbers) assert.ok(Number.isInteger(n) && n >= 1 && n <= 456);
+});
+
+test('a rejoining player keeps their number', () => {
+  const store = storeWithCodes('ABCD');
+  store.createRoom('s-host');
+  const { player } = store.joinRoom('ABCD', 's1', 'Sam');
+  store.disconnect('s1');
+  assert.equal(store.resumePlayer('s2', 'ABCD', player.key).player.number, player.number);
 });
 
 test('joinRoom rejects unknown rooms, bad names and duplicate names', () => {

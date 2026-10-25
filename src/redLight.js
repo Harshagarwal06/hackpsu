@@ -29,16 +29,21 @@ class RedLightRound {
     this.cycle = 0;
     this.timer = null;
     this.redStartedAt = 0;
+    this.startedAt = 0;
     this.players = new Map();
     for (const [id, name] of players) {
       // redSeenAt: when this player's phone confirmed it is showing RED.
-      this.players.set(id, { id, name, status: 'playing', steps: 0, lastStepAt: 0, redSeenAt: null });
+      // redSum/redCount: motion during red lights; crossMs: time to cross (for awards).
+      this.players.set(id, {
+        id, name, status: 'playing', steps: 0, lastStepAt: 0, redSeenAt: null, redSum: 0, redCount: 0, crossMs: null,
+      });
     }
   }
 
   start() {
     if (this.phase !== 'idle') throw new Error('Round already started.');
     this.on.start({ players: [...this.players.values()].map(({ id, name }) => ({ id, name })) });
+    this.startedAt = Date.now();
     this.toGreen();
   }
 
@@ -72,11 +77,18 @@ class RedLightRound {
     if (!p || p.status !== 'playing') return;
     const now = Date.now();
     const moving = m > this.getThreshold();
+    if (this.phase === 'red') {
+      p.redSum += m;
+      p.redCount++;
+    }
 
     if (this.phase === 'green' && moving && now - p.lastStepAt >= this.opts.minStepGapMs) {
       p.steps++;
       p.lastStepAt = now;
-      if (p.steps >= this.opts.finishSteps) p.status = 'finished';
+      if (p.steps >= this.opts.finishSteps) {
+        p.status = 'finished';
+        p.crossMs = now - this.startedAt;
+      }
       this.emitPlayer(p);
       if (p.status === 'finished') this.endIfNobodyPlaying();
     } else if (this.phase === 'red' && moving && now - this.graceStart(p) >= this.opts.graceMs) {
@@ -151,7 +163,14 @@ class RedLightRound {
         }
       }
     }
-    const results = [...this.players.values()].map(({ id, name, status }) => ({ id, name, status }));
+    const results = [...this.players.values()].map((p) => ({
+      id: p.id,
+      name: p.name,
+      status: p.status,
+      crossMs: p.crossMs,
+      redAvg: p.redCount ? p.redSum / p.redCount : null,
+      redSamples: p.redCount,
+    }));
     this.on.over({ reason, results });
   }
 

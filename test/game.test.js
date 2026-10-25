@@ -97,6 +97,78 @@ test('if players leave during an intermission and one is left, they win', () => 
   assert.deepEqual(game.state().winners, [{ id: 'ann', name: 'Ann' }]);
 });
 
+test('the prize pot grows by 100,000,000 per elimination', () => {
+  const game = new Game(players('Ann', 'Ben', 'Cal'));
+  assert.equal(game.state().pot, 0);
+  game.nextRound();
+  game.roundOver([result('ann', 'finished'), result('ben', 'eliminated'), result('cal', 'finished')]);
+  assert.equal(game.state().pot, 100_000_000);
+});
+
+test('a finished game hands out awards and a result card per player', () => {
+  const game = new Game(players('Ann', 'Ben', 'Cal', 'Dee'));
+  game.nextRound();
+  game.roundOver([
+    { id: 'ann', name: 'Ann', status: 'finished', crossMs: 9000, redAvg: 0.4, redSamples: 30 },
+    { id: 'ben', name: 'Ben', status: 'finished', crossMs: 7300, redAvg: 1.1, redSamples: 30 },
+    { id: 'cal', name: 'Cal', status: 'finished', crossMs: 8000, redAvg: 0.2, redSamples: 3 }, // too few readings for Statue
+    { id: 'dee', name: 'Dee', status: 'eliminated', crossMs: null, redAvg: 0.1, redSamples: 30 }, // out: can't be Statue
+  ]);
+  game.nextRound();
+  game.roundOver([
+    { id: 'ann', name: 'Ann', team: 'pink', status: 'won', avgShake: 12.5 },
+    { id: 'ben', name: 'Ben', team: 'teal', status: 'eliminated', avgShake: 19.25 },
+    { id: 'cal', name: 'Cal', team: 'pink', status: 'won', avgShake: 3 },
+  ]);
+  game.nextRound();
+  game.roundOver([
+    { id: 'ann', name: 'Ann', status: 'finished', reached: 4, correctNew: 2, fastestMs: 2100 },
+    { id: 'cal', name: 'Cal', status: 'eliminated', reached: 1, correctNew: 1, fastestMs: 900 },
+  ]);
+  const s = game.state();
+  assert.equal(s.phase, 'over');
+  assert.equal(s.pot, 300_000_000);
+
+  const award = Object.fromEntries(s.awards.map((a) => [a.key, [a.name, a.detail]]));
+  assert.deepEqual(award, {
+    statue: ['Ann', 'average movement 0.40 on red'],
+    speed: ['Ben', 'crossed in 7.3 s'],
+    shake: ['Ben', 'average shake 19.3'],
+    glass: ['Ann', 'guessed 2 unknown panels right'],
+    daredevil: ['Cal', 'jumped in 0.9 s'],
+  });
+
+  const card = Object.fromEntries(s.cards.map((c) => [c.id, c]));
+  assert.deepEqual(card.ann, {
+    id: 'ann',
+    name: 'Ann',
+    outcome: 'winner',
+    outRound: null,
+    roundsSurvived: 3,
+    prize: 300_000_000,
+    lines: [
+      'Red Light, Green Light: crossed the line in 9.0 s',
+      'Tug of War: Team Pink, won, average shake 12.5',
+      'Glass Bridge: crossed the bridge',
+    ],
+    awards: ['Statue', 'Glass Expert'],
+  });
+  assert.equal(card.dee.outcome, 'out');
+  assert.equal(card.dee.outRound, 'Red Light, Green Light');
+  assert.equal(card.dee.roundsSurvived, 0);
+  assert.equal(card.dee.prize, 0);
+  assert.deepEqual(card.cal.lines.at(-1), 'Glass Bridge: fell on step 2');
+  assert.deepEqual(card.cal.awards, ['Daredevil']);
+});
+
+test('awards with no qualifying player are left out', () => {
+  const game = new Game(players('Ann', 'Ben'));
+  game.nextRound();
+  game.roundOver([result('ann', 'finished'), result('ben', 'eliminated')]);
+  assert.deepEqual(game.state().awards, []);
+  assert.equal(game.state().cards.length, 2);
+});
+
 test('rounds can only start between rounds', () => {
   const game = new Game(players('Ann', 'Ben'));
   game.nextRound();

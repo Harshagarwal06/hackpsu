@@ -156,6 +156,26 @@ test('round ends early once nobody is still playing', (t) => {
   assert.equal(events.filter((e) => e[0] === 'phase').length, phasesBefore);
 });
 
+test('results report crossing time and average movement on red', (t) => {
+  const { round, events, tick } = setup(t);
+  round.start();
+  for (let i = 0; i < 3; i++) {
+    round.handleMotion('a', 5); // Ann crosses after 3 steps, 200 ms in
+    tick(100);
+  }
+  tick(700); // red
+  round.seenRed('b');
+  round.handleMotion('b', 0.5);
+  round.handleMotion('b', 0.25);
+  round.stop();
+  const results = Object.fromEntries(events.find((e) => e[0] === 'over')[1].results.map((r) => [r.id, r]));
+  assert.equal(results.a.crossMs, 200);
+  assert.equal(results.b.crossMs, null);
+  assert.equal(results.b.redAvg, 0.375);
+  assert.equal(results.b.redSamples, 2);
+  assert.equal(results.a.redAvg, null);
+});
+
 test('host stop ends the round without eliminating anyone', (t) => {
   const { round, events } = setup(t);
   round.start();

@@ -270,6 +270,7 @@ function createGameServer({ roundOptions, tugOptions, bridgeOptions, reconnectMs
       key: player.key,
       code: room.code,
       name: player.name,
+      number: player.number,
       roundRunning: Boolean(room.round),
       game: room.game ? room.game.state() : null,
     };

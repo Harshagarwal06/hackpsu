@@ -56,7 +56,10 @@ class TugOfWarRound {
     }
     this.players = new Map();
     for (const id of players.keys()) {
-      this.players.set(id, { id, name: players.get(id), team: teamOf.get(id), force: 0, seenAt: 0 });
+      // forceSum/forceCount: shake readings while pulling (for awards).
+      this.players.set(id, {
+        id, name: players.get(id), team: teamOf.get(id), force: 0, seenAt: 0, forceSum: 0, forceCount: 0,
+      });
     }
   }
 
@@ -83,6 +86,10 @@ class TugOfWarRound {
     if (!p) return;
     p.force = Math.min(m, this.opts.maxForce);
     p.seenAt = Date.now();
+    if (this.phase === 'pull') {
+      p.forceSum += p.force;
+      p.forceCount++;
+    }
   }
 
   // Average shake strength per team, counting stale readings as zero.
@@ -165,11 +172,12 @@ class TugOfWarRound {
     if (this.phase === 'over') return;
     this.clearTimers();
     this.phase = 'over';
-    const results = [...this.players.values()].map(({ id, name, team }) => ({
+    const results = [...this.players.values()].map(({ id, name, team, forceSum, forceCount }) => ({
       id,
       name,
       team,
       status: winner === null ? 'playing' : team === winner ? 'won' : 'eliminated',
+      avgShake: forceCount ? forceSum / forceCount : null,
     }));
     this.on.over({ reason, winner, results });
   }

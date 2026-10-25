@@ -10,6 +10,7 @@
   <main class="player">
     <div class="shapes">○ △ □</div>
     <h1>Phone Edition</h1>
+    <div class="player-number hidden" id="my-number"></div>
 
     <section id="join-view">
       <p class="muted">Enter the code on the big screen.</p>
@@ -36,6 +37,14 @@
         <div class="pad" id="pad-left"><div class="pad-fill"></div><span>◀ LEFT</span></div>
         <div class="pad" id="pad-right"><div class="pad-fill"></div><span>RIGHT ▶</span></div>
       </div>
+      <p class="pot-line hidden" id="pot-line"></p>
+      <section class="result-card hidden" id="result-card">
+        <div class="result-head" id="result-head"></div>
+        <div class="result-prize" id="result-prize"></div>
+        <ul class="result-lines" id="result-lines"></ul>
+        <div class="result-awards" id="result-awards"></div>
+        <p class="muted result-hint">Screenshot this!</p>
+      </section>
     </section>
 
     <div class="meter hidden" id="motion-meter"><div id="my-meter"></div></div>

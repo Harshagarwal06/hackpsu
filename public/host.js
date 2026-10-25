@@ -158,6 +158,81 @@ function updateButtons() {
 let game = null; // last game:state, or null when there is no game
 let gameOut = new Map(); // id -> round they went out in
 let gameWinners = new Set();
+let shownPot = null; // pot last shown, to tell when it grows
+
+const won = (amount) => `₩${amount.toLocaleString('en-US')}`;
+const pad = (n) => String(n).padStart(3, '0');
+
+// "067 Ann" when we know the player's number.
+function tag(id, name) {
+  const p = players.find((q) => q.id === id);
+  return p ? `${pad(p.number)} ${name}` : name;
+}
+
+// --- Sound (big screen) ---
+// Browsers only allow audio after a click, so it starts on the host's first click.
+let audio = null;
+document.addEventListener('click', () => {
+  if (audio) return;
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return;
+  audio = new Ctx();
+  audio.resume();
+});
+
+function chaChing() {
+  if (!audio) return;
+  const t = audio.currentTime;
+  for (const [delay, freq] of [[0, 1318], [0.09, 1760], [0.18, 2637]]) {
+    const osc = audio.createOscillator();
+    const gain = audio.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(freq, t + delay);
+    gain.gain.setValueAtTime(0.25, t + delay);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + delay + 0.35);
+    osc.connect(gain).connect(audio.destination);
+    osc.start(t + delay);
+    osc.stop(t + delay + 0.35);
+  }
+}
+
+function showPot(pot) {
+  $('pot-amount').textContent = won(pot);
+  if (shownPot !== null && pot > shownPot) {
+    chaChing();
+    const box = $('pot');
+    box.classList.remove('grow');
+    void box.offsetWidth; // restart the animation
+    box.classList.add('grow');
+  }
+  shownPot = pot;
+}
+
+function showAwards(state) {
+  const names = state.winners.map((w) => tag(w.id, w.name));
+  const share = state.winners.length ? Math.floor(state.pot / state.winners.length) : 0;
+  $('winner-prize').textContent = state.winners.length
+    ? `${won(share)}${state.winners.length > 1 ? ' each' : ''}`
+    : '';
+  $('winner-names').textContent = names.join(' · ');
+  const box = $('awards');
+  box.replaceChildren();
+  for (const a of state.awards) {
+    const card = document.createElement('div');
+    card.className = 'award';
+    const title = document.createElement('div');
+    title.className = 'award-title';
+    title.textContent = a.title;
+    const who = document.createElement('div');
+    who.className = 'award-who';
+    who.textContent = tag(a.id, a.name);
+    const detail = document.createElement('div');
+    detail.className = 'award-detail';
+    detail.textContent = `${a.why}: ${a.detail}`;
+    card.append(title, who, detail);
+    box.append(card);
+  }
+}
 
 // Called when any round starts. A practice round after a finished game is not
 // part of it, so the game's Winner / Out labels and winner panel go away.
@@ -183,14 +258,15 @@ socket.on('game:state', (state) => {
     }[state.phase];
     $('game-status').textContent = status;
     $('game-note').textContent = state.note;
-    $('game-alive').textContent = `Still in (${state.alive.length}): ${state.alive.map((p) => p.name).join(', ') || 'nobody'}`;
+    showPot(state.pot);
+    $('game-alive').textContent = `Still in (${state.alive.length}): ${state.alive.map((p) => tag(p.id, p.name)).join(', ') || 'nobody'}`;
     $('game-out').textContent = state.out.length
-      ? `Out: ${state.out.map((o) => `${o.name} (${o.round})`).join(', ')}`
+      ? `Out: ${state.out.map((o) => `${tag(o.id, o.name)} (${o.round})`).join(', ')}`
       : '';
     if (state.phase === 'over') {
-      const names = state.winners.map((w) => w.name);
-      $('winner-label').textContent = names.length > 1 ? 'WINNERS' : names.length ? 'WINNER' : 'NO WINNER';
-      $('winner-names').textContent = names.join(' · ');
+      const count = state.winners.length;
+      $('winner-label').textContent = count > 1 ? 'WINNERS' : count ? 'WINNER' : 'NO WINNER';
+      showAwards(state);
       showRoundView(null);
       $('results').classList.add('hidden');
     }
@@ -234,7 +310,7 @@ function renderPlayers() {
       else teamPicks.set(p.id, next);
       updateTeamPicks();
     });
-    card.querySelector('.name').textContent = p.connected ? p.name : `${p.name} · away`;
+    card.querySelector('.name').textContent = `${pad(p.number)} ${p.name}${p.connected ? '' : ' · away'}`;
     const kick = card.querySelector('.kick');
     kick.title = `Remove ${p.name}`;
     kick.setAttribute('aria-label', `Remove ${p.name} from the room`);

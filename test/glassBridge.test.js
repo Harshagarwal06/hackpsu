@@ -93,6 +93,21 @@ test('if everyone falls, nobody crosses', (t) => {
   assert.deepEqual(over(events).results.map((r) => [r.id, r.reached]), [['a', 0], ['b', 1]]);
 });
 
+test('results report correct guesses on unknown panels and the fastest own jump', (t) => {
+  const { round, events, tick } = setup(t);
+  round.start();
+  tick(400);
+  round.choose('a', 'right'); // unknown step, right, 400 ms
+  tick(200);
+  tick(150);
+  round.choose('a', 'left'); // unknown step, wrong, 150 ms
+  tick(200);
+  tick(1000); // Ben freezes on the last step: pushed right (safe), which isn't a guess
+  tick(200); // he's across; the round ends
+  const results = Object.fromEntries(over(events).results.map((r) => [r.id, [r.correctNew, r.fastestMs]]));
+  assert.deepEqual(results, { a: [1, 150], b: [0, null] });
+});
+
 test('crossing players have reached every step', (t) => {
   const { round, events, tick } = setup(t);
   round.start();

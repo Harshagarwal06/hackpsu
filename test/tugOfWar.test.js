@@ -124,6 +124,16 @@ test('readings are capped and stale readings count as zero', (t) => {
   assert.equal(lastState(events).rope, rope);
 });
 
+test('results report each player\'s average shake while pulling', (t) => {
+  const { round, events, run } = setup(t);
+  round.start();
+  run(300, { a: 50 }); // countdown: not counted
+  run(300, { a: 10, b: 4 });
+  round.stop();
+  const results = Object.fromEntries(over(events).results.map((r) => [r.id, r.avgShake]));
+  assert.deepEqual(results, { a: 10, b: 4 });
+});
+
 test('when time runs out, the team ahead wins', (t) => {
   const { round, events, run } = setup(t, { options: { pullRate: 0.001 } });
   round.start();

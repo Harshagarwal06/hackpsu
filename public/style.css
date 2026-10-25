@@ -246,6 +246,36 @@ button.big { font-size: 1.15rem; padding: 1rem 1.6rem; }
 }
 .winner-label { font-size: 1.2rem; font-weight: 800; letter-spacing: 0.3em; color: #ffd166; margin-top: 8px; }
 .winner-names { font-size: clamp(2.5rem, 10vw, 6rem); font-weight: 900; line-height: 1.1; }
+.winner-prize { font-size: clamp(1.4rem, 4vw, 2.4rem); font-weight: 800; color: #ffd166; margin-top: 8px; }
+.winner-prize:empty { display: none; }
+
+/* Prize pot (host) */
+.pot {
+  float: right;
+  font-size: clamp(1.2rem, 3vw, 2rem);
+  font-weight: 900;
+  color: #ffd166;
+}
+.pot-label { font-size: 0.55em; font-weight: 700; color: var(--muted); letter-spacing: 0.1em; text-transform: uppercase; }
+.pot.grow { animation: pot-grow 700ms ease-out; }
+@keyframes pot-grow {
+  0% { transform: scale(1); }
+  30% { transform: scale(1.25); text-shadow: 0 0 24px #ffd166; }
+  100% { transform: scale(1); }
+}
+
+/* End-of-game awards (host) */
+.awards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  margin-top: 24px;
+  text-align: left;
+}
+.award { background: rgba(0, 0, 0, 0.35); border: 1px solid #5c4a14; border-radius: 12px; padding: 12px 14px; }
+.award-title { color: #ffd166; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.85rem; }
+.award-who { font-size: 1.3rem; font-weight: 800; margin-top: 4px; }
+.award-detail { color: var(--muted); font-size: 0.9rem; margin-top: 2px; }
 
 .phase-banner {
   text-align: center;
@@ -316,6 +346,38 @@ body[data-screen="pink"] { background: var(--pink); }
 body[data-screen="teal"] { background: var(--teal); }
 
 body[data-screen="bridge"] { background: #16213e; }
+
+/* Player number badge (phone), like the show's tracksuits */
+.player-number {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 4px 14px;
+  border-radius: 999px;
+  background: var(--teal);
+  color: white;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+
+.pot-line { color: #ffd166; font-weight: 800; font-size: 1.15rem; }
+
+/* End-of-game result card (phone) */
+.result-card {
+  margin-top: 1.25rem;
+  padding: 16px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid #5c4a14;
+  text-align: left;
+}
+.result-head { font-weight: 900; font-size: 1.1rem; }
+.result-prize { color: #ffd166; font-weight: 800; font-size: 1.3rem; margin-top: 4px; }
+.result-prize:empty { display: none; }
+.result-lines { margin: 10px 0 0; padding-left: 18px; }
+.result-lines li { margin: 4px 0; }
+.result-awards { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.result-award { padding: 4px 10px; border-radius: 999px; background: #5c4a14; color: #ffd166; font-weight: 700; font-size: 0.85rem; }
+.result-hint { margin: 10px 0 0; font-size: 0.8rem; }
 body[data-screen="winner"] { background: radial-gradient(circle at 50% 30%, #6b4e00, #0b0b0f 75%); }
 body[data-screen="winner"] .big-word { color: #ffd166; }
 

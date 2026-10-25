@@ -165,6 +165,7 @@ if (pendingRejoin) {
 
 // --- Screens ---------------------------------------------------------------
 let myId = null;
+let myNumber = null; // player number, 1-456
 let myStatus = 'playing';
 let inRound = false; // true while this player is taking part in a round
 let streaming = false;
@@ -181,8 +182,11 @@ function showScreen(screen, word, hint) {
 // the server replays its start right after this.
 function enterRoom(res) {
   myId = res.id;
+  myNumber = res.number;
   sessionStorage.setItem(PLAYER_SESSION, JSON.stringify({ code: res.code, key: res.key, name: res.name }));
   $('me').textContent = res.name;
+  $('my-number').textContent = `Player ${String(res.number).padStart(3, '0')}`;
+  $('my-number').classList.remove('hidden');
   $('room').textContent = res.code;
   $('lobby-status').textContent = res.roundRunning
     ? 'A round is in progress. You will play the next one.'
@@ -197,6 +201,7 @@ function enterRoom(res) {
   $('join-view').classList.add('hidden');
   $('motion-meter').classList.remove('hidden');
   hideRoundWidgets();
+  hideGameExtras();
   showScreen('lobby');
   if (res.game) applyGame(res.game);
   if (!streaming) {
@@ -215,10 +220,13 @@ function enterRoom(res) {
 function leaveRoom(message) {
   sessionStorage.removeItem(PLAYER_SESSION);
   myId = null;
+  myNumber = null;
   inRound = false;
   inBridge = false;
   bridgeChoosing = false;
   myTeam = null;
+  hideGameExtras();
+  $('my-number').classList.add('hidden');
   showScreen('lobby');
   $('lobby-view').classList.add('hidden');
   $('motion-meter').classList.add('hidden');
@@ -430,6 +438,7 @@ function hideRoundWidgets() {
 // any error left over from it.
 function startingRound() {
   hideRoundWidgets();
+  hideGameExtras();
   $('status-error').textContent = '';
 }
 
@@ -504,9 +513,47 @@ socket.on('gb:over', ({ results }) => {
 // The game decides what this phone shows between rounds. During a round the
 // round's own events drive the screen, so 'playing' only matters for players
 // who are out or joined late.
+const won = (amount) => `₩${amount.toLocaleString('en-US')}`;
+
+function showPotLine(pot) {
+  $('pot-line').textContent = `Prize pot: ${won(pot)}`;
+  $('pot-line').classList.remove('hidden');
+}
+
+// The end-of-game card for this player: outcome, prize, a line per round, awards.
+function showResultCard(card) {
+  const pad = (n) => String(n).padStart(3, '0');
+  $('result-head').textContent = card.outcome === 'winner'
+    ? `Player ${pad(myNumber)} · Winner`
+    : `Player ${pad(myNumber)} · Out in ${card.outRound}`;
+  $('result-prize').textContent = card.prize ? `Prize: ${won(card.prize)}` : '';
+  const lines = $('result-lines');
+  lines.replaceChildren();
+  for (const text of card.lines) {
+    const li = document.createElement('li');
+    li.textContent = text;
+    lines.append(li);
+  }
+  const awards = $('result-awards');
+  awards.replaceChildren();
+  for (const title of card.awards) {
+    const badge = document.createElement('span');
+    badge.className = 'result-award';
+    badge.textContent = `🏅 ${title}`;
+    awards.append(badge);
+  }
+  $('result-card').classList.remove('hidden');
+}
+
+function hideGameExtras() {
+  $('pot-line').classList.add('hidden');
+  $('result-card').classList.add('hidden');
+}
+
 function applyGame(game) {
   if (!myId) return;
   if (!game) {
+    hideGameExtras();
     if (!inRound) {
       showScreen('lobby');
       $('lobby-status').textContent = 'Waiting for the host to start.';
@@ -516,6 +563,7 @@ function applyGame(game) {
   const alive = game.alive.some((p) => p.id === myId);
   const out = game.out.find((o) => o.id === myId);
   if (game.phase === 'over') {
+    const card = game.cards.find((c) => c.id === myId);
     if (game.winners.some((w) => w.id === myId)) {
       const others = game.winners.filter((w) => w.id !== myId).map((w) => w.name);
       let hint = 'Last one standing. Take a bow.';
@@ -529,11 +577,17 @@ function applyGame(game) {
       const names = game.winners.map((w) => w.name).join(', ') || 'nobody';
       showScreen('eliminated', 'GAME OVER', `Winner: ${names}`);
     }
+    $('pot-line').classList.add('hidden');
+    if (card) showResultCard(card);
   } else if (out) {
-    if (!inRound) showScreen('eliminated', "YOU'RE OUT", `Out in ${out.round}. Watch the big screen.`);
+    if (!inRound) {
+      showScreen('eliminated', "YOU'RE OUT", `Out in ${out.round}. Watch the big screen.`);
+      showPotLine(game.pot);
+    }
   } else if (alive) {
     if (game.phase === 'intermission') {
       showScreen('finished', "YOU'RE STILL IN", `Next: ${game.next}. Get ready!`);
+      showPotLine(game.pot);
     }
   } else {
     // Joined after the game started.
