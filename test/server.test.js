@@ -173,6 +173,50 @@ test('the host reconnects to the same room and sees the game it left', async (t)
   assert.equal((await emitWithAck(host2, 'host:end-round')).ok, true);
 });
 
+test('practice Tug of War uses the host\'s team picks; the real game ignores them', async (t) => {
+  const { httpServer, io } = createGameServer({
+    tugOptions: { countdownMs: 5000 },
+    roundOptions: { greenMinMs: 5000, greenMaxMs: 5000 },
+  });
+  await new Promise((resolve) => httpServer.listen(0, resolve));
+  const url = `http://localhost:${httpServer.address().port}`;
+  const host = connect(url);
+  const phones = [connect(url), connect(url), connect(url)];
+  t.after(() => {
+    for (const s of [host, ...phones]) s.close();
+    io.close();
+  });
+
+  const { code } = await emitWithAck(host, 'host:create');
+  const [ann, ben, cal] = await Promise.all(
+    ['Ann', 'Ben', 'Cal'].map((name, i) => emitWithAck(phones[i], 'player:join', { code, name })),
+  );
+
+  // Mistakes are refused with a clear reason.
+  const bad = await emitWithAck(host, 'host:start-tug', { teams: { [ann.id]: 'purple' } });
+  assert.equal(bad.error.code, 'BAD_TEAMS');
+  const oneSided = await emitWithAck(host, 'host:start-tug', {
+    teams: { [ann.id]: 'pink', [ben.id]: 'pink', [cal.id]: 'pink' },
+  });
+  assert.equal(oneSided.error.code, 'ONE_TEAM');
+
+  // "Judges vs us": Ann alone on Teal, Ben picked Pink, Cal left to chance
+  // (joins the smaller team, Pink is 1 v Teal 1, tie goes to Pink).
+  const started = once(host, 'tow:start');
+  const ok = await emitWithAck(host, 'host:start-tug', {
+    teams: { [ann.id]: 'teal', [ben.id]: 'pink', p_gone: 'teal' },
+  });
+  assert.equal(ok.ok, true);
+  const teams = Object.fromEntries((await started).teams.map((m) => [m.name, m.team]));
+  assert.deepEqual(teams, { Ann: 'teal', Ben: 'pink', Cal: 'pink' });
+  await emitWithAck(host, 'host:end-round');
+
+  // The real game has no way to pass picks: Start Game takes no payload.
+  await emitWithAck(host, 'host:game-start');
+  const gameTug = await emitWithAck(host, 'host:start-tug', { teams: { [ann.id]: 'teal' } });
+  assert.equal(gameTug.error.code, 'ROUND_RUNNING');
+});
+
 test('the host can kick a player out of the room and the game', async (t) => {
   const { httpServer, io } = createGameServer({
     roundOptions: { greenMinMs: 5000, greenMaxMs: 5000 },

@@ -139,6 +139,18 @@ input {
   font-size: 0.85rem;
 }
 .player-card .kick:hover { background: #2a2a35; color: var(--red); }
+
+/* Practice Tug of War team picker on each card */
+.player-card .team-pick {
+  margin-top: 10px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  background: #2a2a35;
+  color: var(--muted);
+}
+.player-card .team-pick[data-pick="pink"] { background: var(--pink); color: white; }
+.player-card .team-pick[data-pick="teal"] { background: var(--teal); color: white; }
 .player-card .status { font-weight: 700; font-size: 0.9rem; }
 .player-card[data-status="eliminated"] { opacity: 0.45; }
 .player-card[data-status="eliminated"] .name { text-decoration: line-through; }

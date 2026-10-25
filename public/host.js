@@ -98,7 +98,16 @@ function command(event) {
 }
 
 $('start-btn').addEventListener('click', () => command('host:start-redlight'));
-$('tug-btn').addEventListener('click', () => command('host:start-tug'));
+// Practice Tug of War teams picked on the player cards: id -> 'pink' | 'teal'.
+// Anyone not picked is placed randomly. The real game always uses random teams.
+const teamPicks = new Map();
+const NEXT_PICK = { random: 'pink', pink: 'teal', teal: 'random' };
+const PICK_LABEL = { random: 'Team: random', pink: 'Team: Pink', teal: 'Team: Teal' };
+
+$('tug-btn').addEventListener('click', () => {
+  showError(null);
+  socket.emit('host:start-tug', { teams: Object.fromEntries(teamPicks) }, (res) => showError(res.ok ? null : res.error));
+});
 $('bridge-btn').addEventListener('click', () => command('host:start-bridge'));
 $('game-btn').addEventListener('click', () => command('host:game-start'));
 $('next-btn').addEventListener('click', () => command('host:game-next'));
@@ -115,7 +124,19 @@ $('end-btn').addEventListener('click', () => {
   socket.emit('host:end-round', (res) => showError(res.ok ? null : res.error));
 });
 
+// Team buttons only make sense between practice rounds.
+function updateTeamPicks() {
+  const show = !roundRunning && !(game && game.phase !== 'over');
+  for (const [id, c] of cards) {
+    const pick = teamPicks.get(id) || 'random';
+    c.pick.classList.toggle('hidden', !show);
+    c.pick.dataset.pick = pick;
+    c.pick.textContent = PICK_LABEL[pick];
+  }
+}
+
 function updateButtons() {
+  updateTeamPicks();
   const noRoom = $('room-code').textContent.includes('·');
   const gameActive = Boolean(game && game.phase !== 'over');
   const busy = roundRunning || gameActive || noRoom;
@@ -193,13 +214,26 @@ function renderPlayers() {
   const list = $('players');
   list.replaceChildren();
   cards.clear();
+  // Forget team picks for players who have left.
+  for (const id of teamPicks.keys()) {
+    if (!players.some((p) => p.id === id)) teamPicks.delete(id);
+  }
   for (const p of players) {
     const card = document.createElement('div');
     card.className = 'player-card';
     card.innerHTML = `
       <div class="card-top"><span class="name"></span><span class="status"></span><button class="kick" type="button">✕</button></div>
       <div class="meter motion"><div></div><span class="marker"></span></div>
-      <div class="meter progress"><div></div></div>`;
+      <div class="meter progress"><div></div></div>
+      <button class="team-pick" type="button"></button>`;
+    const pick = card.querySelector('.team-pick');
+    pick.title = 'Tap to choose this player\'s team for practice Tug of War';
+    pick.addEventListener('click', () => {
+      const next = NEXT_PICK[teamPicks.get(p.id) || 'random'];
+      if (next === 'random') teamPicks.delete(p.id);
+      else teamPicks.set(p.id, next);
+      updateTeamPicks();
+    });
     card.querySelector('.name').textContent = p.connected ? p.name : `${p.name} · away`;
     const kick = card.querySelector('.kick');
     kick.title = `Remove ${p.name}`;
@@ -216,6 +250,7 @@ function renderPlayers() {
       marker: card.querySelector('.marker'),
       progress: card.querySelector('.progress > div'),
       status: card.querySelector('.status'),
+      pick,
     });
     applyRoundState(p.id);
   }

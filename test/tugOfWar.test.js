@@ -55,6 +55,37 @@ test('splits players into teams that differ by at most one', (t) => {
   assert.ok(Math.abs(pink - teal) <= 1);
 });
 
+const teamsOf = (round) => Object.fromEntries([...round.players.values()].map((p) => [p.id, p.team]));
+const five = new Map([['a', 'A'], ['b', 'B'], ['c', 'C'], ['d', 'D'], ['e', 'E']]);
+
+test('picked players go on their team; the rest fill the smaller team', () => {
+  const round = new TugOfWarRound({
+    players: five,
+    picks: new Map([['a', 'teal'], ['b', 'teal'], ['c', 'teal']]),
+    random: () => 0.99,
+    on: {},
+  });
+  // Three picked Teal, so both unpicked players go to Pink (3 v 2).
+  assert.deepEqual(teamsOf(round), { a: 'teal', b: 'teal', c: 'teal', d: 'pink', e: 'pink' });
+});
+
+test('picks can make lopsided teams on purpose', () => {
+  const round = new TugOfWarRound({
+    players: five,
+    picks: new Map([['a', 'pink'], ['b', 'teal'], ['c', 'teal'], ['d', 'teal'], ['e', 'teal']]),
+    on: {},
+  });
+  assert.deepEqual(teamsOf(round), { a: 'pink', b: 'teal', c: 'teal', d: 'teal', e: 'teal' });
+});
+
+test('picks for players not in the round are ignored; bad teams and one-sided picks are refused', () => {
+  const two = new Map([['a', 'A'], ['b', 'B']]);
+  const round = new TugOfWarRound({ players: two, picks: new Map([['gone', 'pink'], ['a', 'teal']]), on: {} });
+  assert.deepEqual(teamsOf(round), { a: 'teal', b: 'pink' });
+  assert.throws(() => new TugOfWarRound({ players: two, picks: new Map([['a', 'purple']]), on: {} }));
+  assert.throws(() => new TugOfWarRound({ players: two, picks: new Map([['a', 'pink'], ['b', 'pink']]), on: {} }));
+});
+
 test('shaking during the countdown does nothing', (t) => {
   const { round, events, run } = setup(t);
   round.start();

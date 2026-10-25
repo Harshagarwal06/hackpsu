@@ -18,8 +18,9 @@ const TEAMS = ['pink', 'teal'];
 
 class TugOfWarRound {
   // players: Map of id -> name
+  // picks: Map of id -> 'pink' | 'teal' for players the host put on a team
   // on: { start(info), state(info), over(summary) }
-  constructor({ players, on, random = Math.random, options = {} }) {
+  constructor({ players, picks = new Map(), on, random = Math.random, options = {} }) {
     if (players.size < 2) throw new Error('Tug of War needs at least 2 players.');
     this.opts = { ...DEFAULT_OPTIONS, ...options };
     this.on = on;
@@ -29,16 +30,34 @@ class TugOfWarRound {
     this.ticker = null;
     this.pullStartedAt = 0;
 
-    // Shuffle, then alternate teams so they differ in size by at most one.
-    const ids = [...players.keys()];
-    for (let i = ids.length - 1; i > 0; i--) {
+    // Picked players go on their team. Everyone else is shuffled and each
+    // joins the smaller team (Pink on a tie), so with no picks the teams
+    // differ in size by at most one.
+    const size = { pink: 0, teal: 0 };
+    const teamOf = new Map();
+    for (const [id, team] of picks) {
+      if (!players.has(id)) continue;
+      if (!TEAMS.includes(team)) throw new Error(`Team must be "pink" or "teal", got "${team}".`);
+      teamOf.set(id, team);
+      size[team]++;
+    }
+    const rest = [...players.keys()].filter((id) => !teamOf.has(id));
+    for (let i = rest.length - 1; i > 0; i--) {
       const j = Math.floor(random() * (i + 1));
-      [ids[i], ids[j]] = [ids[j], ids[i]];
+      [rest[i], rest[j]] = [rest[j], rest[i]];
+    }
+    for (const id of rest) {
+      const team = size.teal < size.pink ? 'teal' : 'pink';
+      teamOf.set(id, team);
+      size[team]++;
+    }
+    if (size.pink === 0 || size.teal === 0) {
+      throw new Error('Tug of War needs at least one player on each team.');
     }
     this.players = new Map();
-    ids.forEach((id, i) => {
-      this.players.set(id, { id, name: players.get(id), team: TEAMS[i % 2], force: 0, seenAt: 0 });
-    });
+    for (const id of players.keys()) {
+      this.players.set(id, { id, name: players.get(id), team: teamOf.get(id), force: 0, seenAt: 0 });
+    }
   }
 
   start() {

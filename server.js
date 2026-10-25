@@ -111,10 +111,17 @@ function createGameServer({ roundOptions, tugOptions, bridgeOptions, reconnectMs
     round.start();
   }
 
-  function startTugOfWar(room, names, afterOver) {
+  // picks: Map of id -> team chosen by the host (practice only).
+  function startTugOfWar(room, names, afterOver, picks = new Map()) {
     if (names.size < 2) throw new RoomError('NOT_ENOUGH_PLAYERS', 'Tug of War needs at least 2 players.');
+    const unpicked = [...names.keys()].filter((id) => !picks.has(id)).length;
+    const pickedTeams = new Set([...picks].filter(([id]) => names.has(id)).map(([, team]) => team));
+    if (unpicked === 0 && pickedTeams.size < 2) {
+      throw new RoomError('ONE_TEAM', 'Put at least one player on each team.');
+    }
     const round = new TugOfWarRound({
       players: names,
+      picks,
       options: tugOptions,
       on: {
         start: (info) => io.to(roomCh(room)).emit('tow:start', info),
@@ -153,10 +160,28 @@ function createGameServer({ roundOptions, tugOptions, bridgeOptions, reconnectMs
   const STARTERS = { redlight: startRedLight, tug: startTugOfWar, bridge: startGlassBridge };
 
   // Practice rounds: everyone plays and nothing carries over.
-  function startPractice(room, key) {
+  function startPractice(room, key, picks) {
     if (room.round) throw new RoomError('ROUND_RUNNING', 'A round is already running.');
     if (room.game?.isActive()) throw new RoomError('GAME_RUNNING', 'Finish or end the game first.');
-    STARTERS[key](room, allPlayers(room));
+    STARTERS[key](room, allPlayers(room), undefined, picks);
+  }
+
+  // The host's team picks for practice Tug of War: { [player id]: 'pink' | 'teal' }.
+  // Picks for players who have since left are ignored (they were tapped
+  // before the player left; nothing is wrong with the request).
+  function parsePicks(room, raw) {
+    const picks = new Map();
+    if (raw === undefined || raw === null) return picks;
+    if (typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new RoomError('BAD_TEAMS', 'Teams must be a map of player id to team.');
+    }
+    for (const [id, team] of Object.entries(raw)) {
+      if (team !== 'pink' && team !== 'teal') {
+        throw new RoomError('BAD_TEAMS', `Team must be "pink" or "teal", got "${team}".`);
+      }
+      if (room.players.has(id)) picks.set(id, team);
+    }
+    return picks;
   }
 
   function emitGame(room) {
@@ -291,9 +316,12 @@ function createGameServer({ roundOptions, tugOptions, bridgeOptions, reconnectMs
       }, ack);
     });
 
-    socket.on('host:start-tug', (ack) => {
+    // Optional payload { teams: { [player id]: 'pink' | 'teal' } }; may be omitted.
+    socket.on('host:start-tug', (...args) => {
+      const ack = typeof args.at(-1) === 'function' ? args.pop() : undefined;
       handle(socket, () => {
-        startPractice(store.hostedRoom(socket.id), 'tug');
+        const room = store.hostedRoom(socket.id);
+        startPractice(room, 'tug', parsePicks(room, args[0]?.teams));
         return {};
       }, ack);
     });
