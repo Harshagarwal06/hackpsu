@@ -176,6 +176,25 @@ function showScreen(screen, word, hint) {
   $('game-view').classList.toggle('hidden', screen === 'lobby');
   $('big-word').textContent = word || '';
   $('game-hint').textContent = hint || '';
+  showArt(screen);
+}
+
+// The doll watches during Red Light (turning to face you on red); a guard
+// stands over you when you're out (art.js).
+function showArt(screen) {
+  const box = $('phone-art');
+  if (screen === 'green' || screen === 'red') {
+    let doll = box.querySelector('.doll');
+    if (!doll) {
+      box.innerHTML = dollSVG();
+      doll = box.querySelector('.doll');
+    }
+    setDollFacing(doll, screen === 'red');
+  } else if (screen === 'eliminated') {
+    if (!box.querySelector('.guard')) box.innerHTML = guardSVG('square');
+  } else {
+    box.replaceChildren();
+  }
 }
 
 // Shows the room after a join, rejoin or reconnect. If a round is running,
@@ -484,7 +503,7 @@ socket.on('gb:jump', ({ id, side, correct, forced }) => {
   $('jump-pads').classList.add('hidden');
   const how = forced ? `You froze and got pushed ${side}.` : `You jumped ${side}.`;
   if (correct) {
-    showScreen('green', 'SAFE!', `${how} Tempered glass.`);
+    showScreen('safe', 'SAFE!', `${how} Tempered glass.`);
     tone(523, 1046, 0.4, 'sine');
   } else {
     showScreen('eliminated', 'ELIMINATED', `${how} The glass shattered.`);

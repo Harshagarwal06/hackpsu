@@ -9,10 +9,13 @@
 <body>
   <main class="host">
     <header>
-      <div>
-        <div class="shapes">○ △ □</div>
-        <h1>Phone Edition</h1>
-        <p class="muted">Join at <strong id="join-url"></strong></p>
+      <div class="title-row">
+        <div>
+          <div class="shapes">○ △ □</div>
+          <h1>Phone Edition</h1>
+          <p class="muted">Join at <strong id="join-url"></strong></p>
+        </div>
+        <div class="header-guards" id="header-guards"></div>
       </div>
       <div class="join-box">
         <div>
@@ -64,6 +67,8 @@
     </section>
 
     <section id="winner-view" class="winner hidden">
+      <div class="winner-guard left" id="winner-guard-left"></div>
+      <div class="winner-guard right" id="winner-guard-right"></div>
       <div class="shapes">○ △ □</div>
       <div class="winner-label" id="winner-label">WINNER</div>
       <div class="winner-names" id="winner-names"></div>
@@ -72,8 +77,12 @@
     </section>
 
     <section id="phase-banner" class="phase-banner hidden">
-      <div id="phase-text"></div>
-      <div id="phase-cycle" class="muted"></div>
+      <div class="banner-doll" id="banner-doll"></div>
+      <div class="banner-text">
+        <div id="phase-text"></div>
+        <div id="phase-cycle" class="muted"></div>
+      </div>
+      <div class="banner-guards" id="banner-guards"></div>
     </section>
 
     <section id="tow-view" class="tow hidden">
@@ -131,6 +140,7 @@
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
+  <script src="/art.js"></script>
   <script src="/host.js"></script>
 </body>
 </html>

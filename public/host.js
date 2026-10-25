@@ -14,6 +14,13 @@ let threshold = 0;
 
 $('join-url').textContent = location.host;
 
+// The doll and guards (art.js).
+$('header-guards').innerHTML = guardSVG('circle') + guardSVG('triangle') + guardSVG('square');
+$('banner-doll').innerHTML = dollSVG();
+$('banner-guards').innerHTML = guardSVG('triangle') + guardSVG('square');
+$('winner-guard-left').innerHTML = guardSVG('circle');
+$('winner-guard-right').innerHTML = guardSVG('square');
+
 function showError(err) {
   $('host-error').textContent = err ? err.message : '';
 }
@@ -408,8 +415,9 @@ function roundStarting() {
 }
 
 socket.on('game:state', (state) => {
-  if (state?.phase === 'over' && game?.phase !== 'over') {
-    // The game just ended: announce the winners and their prize.
+  if (state?.phase === 'over' && game && game.phase !== 'over') {
+    // The game just ended (not a reload showing an old result): announce
+    // the winners and their prize.
     const ids = state.winners.map((w) => w.id);
     if (ids.length) {
       const share = Math.floor(state.pot / ids.length);
@@ -582,6 +590,7 @@ socket.on('rl:phase', ({ phase, cycle, cycles }) => {
   banner.dataset.phase = phase;
   $('phase-text').textContent = phase === 'green' ? 'GREEN LIGHT' : 'RED LIGHT';
   $('phase-cycle').textContent = `Light ${cycle} of ${cycles}`;
+  setDollFacing($('banner-doll').querySelector('.doll'), phase === 'red');
   announce(phase === 'green'
     ? { ko: '무궁화 꽃이 피었습니다', en: 'Green light.', sub: 'Green light. (The mugunghwa flower has bloomed.)' }
     : { ko: '멈추세요.', en: 'Red light. Stop.', sub: 'Red light! Stop.' }, { urgent: true });

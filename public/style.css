@@ -368,8 +368,58 @@ button.big { font-size: 1.15rem; padding: 1rem 1.6rem; }
 .panel-label { display: grid; align-items: center; font-size: 0.75rem; font-weight: 700; color: var(--muted); }
 .gb-queue { margin-top: 12px; }
 
+/* --- Art: the doll and the guards (art.js) --- */
+.doll, .guard { display: block; height: 100%; width: auto; overflow: visible; }
+.doll-skin { fill: #f1c6a0; }
+.doll-hair { fill: #1b1b1f; }
+.doll-tie { fill: var(--teal); }
+.doll-dress { fill: var(--pink); }
+.doll-shirt { fill: var(--teal); }
+.doll-eye { fill: #1b1b1f; transition: fill 200ms; }
+.doll-cheek { fill: #f08ca0; opacity: 0.7; }
+.doll-mouth { fill: none; stroke: #8a3b3b; stroke-width: 2.5; stroke-linecap: round; }
+.doll[data-facing="back"] .doll-front { display: none; }
+.doll[data-facing="front"] .doll-back { display: none; }
+.doll[data-facing="front"] .doll-eye { fill: #ff2b2b; filter: drop-shadow(0 0 4px #ff2b2b); }
+.doll-head { transform-box: fill-box; transform-origin: center; }
+.doll.turning .doll-head { animation: doll-turn 450ms ease-in-out; }
+@keyframes doll-turn {
+  0% { transform: scaleX(1); }
+  45% { transform: scaleX(0.06); }
+  100% { transform: scaleX(1); }
+}
+
+.guard-suit { fill: var(--pink); }
+.guard-belt { fill: #a5114f; }
+.guard-mask { fill: #111; }
+.guard-mark { fill: none; stroke: white; stroke-width: 3.5; stroke-linejoin: round; }
+
+/* Host: guards beside the title */
+.title-row { display: flex; align-items: flex-end; gap: 20px; }
+.header-guards { display: flex; gap: 6px; height: 72px; }
+
+/* Host: Red Light banner with the doll and two guards */
+.phase-banner { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.phase-banner .banner-text { flex: 1; }
+.banner-doll { height: clamp(120px, 18vw, 190px); }
+.banner-guards { display: flex; gap: 8px; height: clamp(90px, 13vw, 140px); }
+
+/* Host: guards flanking the winner */
+.winner { position: relative; }
+.winner-guard { position: absolute; top: 24px; height: clamp(90px, 13vw, 140px); }
+.winner-guard.left { left: 20px; }
+.winner-guard.right { right: 20px; }
+@media (max-width: 700px) {
+  .winner-guard { display: none; }
+}
+
+/* Phone: the doll on Red Light, a guard when you're out */
+.phone-art { height: 150px; display: flex; justify-content: center; margin-top: 0.5rem; }
+.phone-art:empty { display: none; }
+
 /* Player page: full-screen color during the round */
-body[data-screen="green"] { background: #128a3e; }
+body[data-screen="green"],
+body[data-screen="safe"] { background: #128a3e; }
 body[data-screen="red"] { background: #c8102e; }
 body[data-screen="eliminated"] { background: #000; }
 body[data-screen="finished"] { background: #0d4f4d; }
